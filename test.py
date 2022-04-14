@@ -85,3 +85,12 @@ a = tuplelist([(1,2), (1,3), (3,4)])
 
 print(a.select(1, '*'))
 print(a.select('*', [3,4]))
+
+# list of bus stops
+S = list([(1,2), (1,3), (1,4)])
+d = m.addVars(S, name="d")
+m.update()
+sum(d.select(1, '*'))
+# in tupledict 
+d.sum(1, '*')
+
