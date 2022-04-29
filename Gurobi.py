@@ -1,6 +1,7 @@
 import gurobipy as gp
 
 from gurobipy import GRB
+from gurobipy import multidict, tuplelist, quicksum
 import numpy as np
 import scipy.sparse as sp
 # This example formulates and solves the following simple MIP model :

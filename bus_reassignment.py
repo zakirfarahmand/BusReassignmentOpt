@@ -5,7 +5,9 @@ from gurobipy import GRB
 from gurobipy import multidict, tuplelist, quicksum
 import numpy as np
 import scipy.sparse as sp
-
+import time
+from datetime import datetime
+import random
 # Bus re-assignment problem description
 # SETS:
     #   L = [1,2,3,4,5,6,7,8,9] set of bus lines
@@ -47,6 +49,28 @@ L = [1,2,3,4,5,6,7,8,9]
 S = ['ECS', "UT", "Wesselerbrink", "Deppenbroek", "Glanerbrug", "Stroinslanden",
      "Zwering", "Stokhorst", "Marssteden", "Hengelo"]
 rho = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+
+
+# trip arc and travel time in minute
+arc, line_number = gp.multidict({
+    ("ECS", "UT"): 1, 
+    ("UT", "ECS"): 1,
+    ("ECS", "Wesselerbrink"): 1,
+    ("Wesselerbrink", "ECS"): 1, 
+    ("ECS", "Deppenbroek"): 2,
+    ("Deppenbroek", "ECS"): 2,
+    ("ECS", "Glanerbrug"): 3, 
+    ("Glanerbrug", "ECS"): 3,
+    ("ECS", "Stroinslanden"): 4, 
+    ("Stroinslanden", "ECS"): 4,
+    ("ECS", "Zwering"): 5, 
+    ("Zwering", "ECS"): 5,
+    ("ECS", "Stokhorst"): 6,
+    ("Stokhorst", "ECS"): 6,
+    ("ECS", "Marssteden"): 8,
+    ("Marssteden", "ECS"): 8, 
+    ("ECS", "Hengelo"): 9
+})
 
 # trip arc and travel time in minute
 arc, travel_time = gp.multidict({
@@ -99,4 +123,74 @@ darc, deadhead_time = gp.multidict({
     ("Marssteden", "ECS"): 24, 
     ("ECS", "Hengelo"): 17
 }) 
-# PARAMETERS:
+
+# for each trip, there are three identicators line number, starting stop, and depature time/arrival time
+trip = [t for t in rho]
+d = {} # departure time in millisecond
+for t in trip:
+    for i in L:
+        for j in S:
+            d[t,i,j] = [round(time.time() * 1000)]
+
+a = {} # arrival time in millisecond 
+for t in trip:
+    for i in L:
+        for j in S:
+            a[t,i,j] = [round(time.time() * 1000)]
+
+# expected in-vehilce crowding at the most crowded segment
+zeta = {} 
+for t in trip:
+    for i in L:
+        for j in S:
+            zeta[t,i,j] = [random.randint(0,100)]
+
+# total boarding passengers along all stops within a trip  
+theta = {}
+for t in trip:
+    for i in L:
+        for j in S:
+            theta[t,i,j] = [random.randint(10,150)]
+
+# maximum capacity threshold 
+C = 60 # maximum number of in-vehicle passengers 
+# operating cost per minute 
+c = 100 # euros per minute 
+
+# first of the day 
+sigma_min = {}
+first_trip = datetime.now().date().strftime("%y-%m-%d ") + "05:00:00"
+first_trip = datetime.strptime(first_trip, "%y-%m-%d %H:%M:%S").timestamp() * 1000
+
+for i in L:
+    for j in S:
+        sigma_min[i,j] = [first_trip]
+# last trip of the day 
+last_trip = datetime.now().date().strftime("%y-%m-%d ") + "23:00:00"
+last_trip = datetime.strptime(last_trip, "%y-%m-%d %H:%M:%S").timestamp() * 1000
+sigma_max = {}
+for i in L:
+    for j in S:
+        sigma_max[i,j] = [last_trip]
+
+# calculating average waiting time 
+# w = (E(H)/2)(1+Var(H)/E(H)^2)
+# E(H) headway mean 
+# Var(H) headway variance 
+
+m = {}
+for i in arc:
+    m[i] = [15]
+    
+def waiting():
+    m = {}
+    v = {}
+    for i in arc:
+        m[i] = [4]
+    for i in arc:
+        v[i] = [2]
+
+
+w = waiting()
+    
+
