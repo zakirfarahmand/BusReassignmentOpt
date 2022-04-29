@@ -2,6 +2,7 @@ import gurobipy as gp
 
 
 from gurobipy import GRB
+from gurobipy import multidict, tuplelist, quicksum
 import numpy as np
 import scipy.sparse as sp
 
@@ -33,11 +34,69 @@ import scipy.sparse as sp
     # X[t,p,q] = the cancellation variable
 
 # objective function: 
-    # min sum sum sum (X[t,i,j] - 1) * zeta[t,i,j] * w[t,i,j] + sum sum sum X[t,p,q] theta[t,p,q] w[t,p,q]
-    # + sum sum sum X[t,i,j] k[t,q,j] c + sum sum sum X[t,i,j] (lamda[p,q] - lamda[i,j]) c
+    # min \sum \sum \sum (X[t,i,j] - 1) * zeta[t,i,j] * w[t,i,j] + \sum \sum \sum X[t,p,q] theta[t,p,q] w[t,p,q]
+    # + \sum \sum \sum X[t,i,j] k[t,q,j] c + \sum \sum \sum X[t,i,j] (lamda[p,q] - lamda[i,j]) c
 # CONSTRAINTS:
-    # sum X[t,i,j]  - sum X[t,p,q] = 0
+    # \sum X[t,i,j]  - \sum X[t,p,q] = 0
     # X[t,i,j] in [0,1]
     #  X[t,i,j] in [0,1]
     #  sigma^min[i,j] < t in rho < sigma^max[i,j]
 
+# SETS:
+L = [1,2,3,4,5,6,7,8,9]
+S = ['ECS', "UT", "Wesselerbrink", "Deppenbroek", "Glanerbrug", "Stroinslanden",
+     "Zwering", "Stokhorst", "Marssteden", "Hengelo"]
+rho = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+
+# trip arc and travel time in minute
+arc, travel_time = gp.multidict({
+    ("ECS", "UT"): 35, 
+    ("UT", "ECS"): 32,
+    ("ECS", "Wesselerbrink"): 25,
+    ("Wesselerbrink", "ECS"): 32, 
+    ("ECS", "Deppenbroek"): 35,
+    ("Deppenbroek", "ECS"): 40,
+    ("ECS", "Glanerbrug"): 50, 
+    ("Glanerbrug", "ECS"): 45,
+    ("ECS", "Stroinslanden"): 28, 
+    ("Stroinslanden", "ECS"): 33,
+    ("ECS", "Zwering"): 41, 
+    ("Zwering", "ECS"): 39,
+    ("ECS", "Stokhorst"): 32,
+    ("Stokhorst", "ECS"): 28,
+    ("ECS", "Marssteden"): 42,
+    ("Marssteden", "ECS"): 48, 
+    ("ECS", "Hengelo"): 35
+})
+
+# arc and deadhead time 
+darc, deadhead_time = gp.multidict({
+    ("ECS", "ECS"): 0,
+    ("UT", "UT"): 0, 
+    ("Wesselerbrink", "Wesselerbrink"):0, 
+    ("Deppenbroek", "Deppenbroek"):0, 
+    ("Glanerbrug", "Glanerbrug"): 0, 
+    ("Stroinslanden", "Stroinslanden"):0, 
+    ("Zwering", "Zwering"): 0, 
+    ("Stokhorst", "Stokhorst"):0, 
+    ("Marssteden", "Marssteden"):0, 
+    ("Hengelo", "Hengelo"): 0, 
+    ("ECS", "UT"): 15, 
+    ("UT", "ECS"): 15,
+    ("ECS", "Wesselerbrink"): 12,
+    ("Wesselerbrink", "ECS"): 10, 
+    ("ECS", "Deppenbroek"): 15,
+    ("Deppenbroek", "ECS"): 14,
+    ("ECS", "Glanerbrug"): 12, 
+    ("Glanerbrug", "ECS"): 20,
+    ("ECS", "Stroinslanden"): 14, 
+    ("Stroinslanden", "ECS"): 17,
+    ("ECS", "Zwering"): 21, 
+    ("Zwering", "ECS"): 19,
+    ("ECS", "Stokhorst"): 16,
+    ("Stokhorst", "ECS"): 14,
+    ("ECS", "Marssteden"): 21,
+    ("Marssteden", "ECS"): 24, 
+    ("ECS", "Hengelo"): 17
+}) 
+# PARAMETERS:
