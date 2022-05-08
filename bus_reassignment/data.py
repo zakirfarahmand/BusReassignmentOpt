@@ -4,7 +4,7 @@ import numpy as np
 data = pd.read_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/bezig_new/bezig.csv',
                     sep=';')
 # select data only for one day 
-data = data[data['IdDimDatum']==20290302]
+data = data[data['IdDimDatum'] <= 20210302]
 
 bus_lines = pd.read_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/Twente_bus_lines.csv',
                     sep=';')
