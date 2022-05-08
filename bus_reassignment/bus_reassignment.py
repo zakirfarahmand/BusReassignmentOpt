@@ -1,21 +1,19 @@
 
 # Bus re-assignment problem description
 # SETS:
-    #   L = [1,2,3,4,5,6,7,8,9] set of bus lines
-    #   S = ['EnschedeCS', "UT", "Wesslerbrink", "Deppenbroek", "Glanerbrug",   
-    #       "Stroinslanden", "Zwering", "Stokhorst", "Marssteden",
-    #       "Hengelo"] set of bus stops
-    #  rho = [[1, 2, 3, 4, 5, 6, 7, 
-    #           8, 9, 10, 11, 12, 13]] set timetabled trips 
-    #   Ab = subset of rho 
-    #   Al = subset of rho 
+    #   T = [1,2,..., t] set of bus trips 
+    #   S_t = [1, 2,..., s_t] set of bus stops served by trip t
+    #   T_a = subset of trips where the new bus trips will be re-assigned 
+    #   A_r = subset of trips where the bus trips will be canceled. 
+    #   F_j = set of following trips for trip j operated by the same bus 
+    #   A = a matrix with T_a columns and T_r rows 
 
 # PARAMETERS:
-    # d[t,i,j] => departure time of trip t dispatching from stop j of line i in millisecond
-    # a[t,i,j] => arrival time of trip t to stop j of line i in millisecond
-    # k[q,j] => deadhead time between two stops q and j in minute
-    # lamda[i,j] => average travel time for a bus dispatching from stop j of line i in minute
-    # c => driving cost per minute 
+    # dep[i] => departure time of trip i \in T
+    # dep[j] => departure time of trip j
+    # deadhead_time[i,j] => deadhead time from the last stop of j to the first stop of i
+    # travel_time[i] => average travel time for trip i \in T
+    # C => driving cost per minute 
     # zeta[t,i,j] => the expected in-vehicle crowding at the most crowded segment of line i for trip t dispatching from stop j
     # theta[t,i,j] => the expected boarding passengers along all stops of line i for trip t dispatching from stop j
     # w[t,i,j] => average passenger waiting time during trip t 

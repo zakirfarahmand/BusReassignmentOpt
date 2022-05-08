@@ -54,3 +54,8 @@ for facility in select.keys():
 for customer, facility in assign.keys():
     if (abs(assign[customer, facility].x) > 1e-6):
         print(f"\n Supermarket {customer +1} receives {round(100*assign[customer, facility].x, 2)} % of its demand from Warehouse {facility + 1}.")
+
+
+# %%
+# solving with pymoo
+from pymoo.core.problem import Problem 
