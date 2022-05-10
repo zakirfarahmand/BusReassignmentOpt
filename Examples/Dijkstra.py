@@ -1,10 +1,7 @@
 import gurobipy as gp
+from gurobipy import *
 
+nodes = ['O', 'U','D', 'V']
+origin =['O']
+destination = ['D']
 
-node = ["O", "U", "D", "V"]
-
-link, weight = gp.multidic({
-    ('O', 'U'): ,
-    ('U', 'D'): , 
-    ('')
-})

@@ -1,38 +1,6 @@
-
-# Bus re-assignment problem description
-# SETS:
-    #   T = [1,2,..., t] set of bus trips 
-    #   S_t = [1, 2,..., s_t] set of bus stops served by trip t
-    #   T_a = subset of trips where the new bus trips will be re-assigned 
-    #   A_r = subset of trips where the bus trips will be canceled. 
-    #   F_j = set of following trips for trip j operated by the same bus 
-    #   A = a matrix with T_a columns and T_r rows 
-
-# PARAMETERS:
-    # dep[i] => departure time of trip i \in T
-    # dep[j] => departure time of trip j
-    # deadhead_time[i,j] => deadhead time from the last stop of j to the first stop of i
-    # travel_time[i] => average travel time for trip i \in T
-    # C => driving cost per minute 
-    # zeta[t,i,j] => the expected in-vehicle crowding at the most crowded segment of line i for trip t dispatching from stop j
-    # theta[t,i,j] => the expected boarding passengers along all stops of line i for trip t dispatching from stop j
-    # w[t,i,j] => average passenger waiting time during trip t 
-    # C => capacity threshold 
-    # sigma^min[i,j] => dispatching time of the first trip 
-    # sigma^max[i,j] => dispatching time of the last trip 
-# DECISION VARIABLES
-    # X[t,i,j] = the re-assignment variable 
-    # X[t,p,q] = the cancellation variable
-
-# objective function: 
-    # min \sum \sum \sum (X[t,i,j] - 1) * zeta[t,i,j] * w[t,i,j] + \sum \sum \sum X[t,p,q] theta[t,p,q] w[t,p,q]
-    # + \sum \sum \sum X[t,i,j] k[t,q,j] c + \sum \sum \sum X[t,i,j] (lamda[p,q] - lamda[i,j]) c
-# CONSTRAINTS:
-    # \sum X[t,i,j]  - \sum X[t,p,q] = 0
-    # X[t,i,j] in [0,1]
-    #  X[t,i,j] in [0,1]
-    #  sigma^min[i,j] < t in rho < sigma^max[i,j]
-
+# import libraries
+from cgi import test
+from doctest import testfile
 import gurobipy as gp
 from gurobipy import GRB
 from gurobipy import multidict, tuplelist, quicksum
@@ -42,7 +10,70 @@ import scipy.sparse as sp
 import time
 from datetime import datetime
 import random
-# SETS:
+import pyodbc
+# import dataset 
+data = pd.read_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/data_enschede.csv',
+                    sep=';')
+data.drop('Unnamed: 0', axis=1, inplace=True)
+
+# convert datum and ritvertrektijd to datetime format 
+data['date'] = pd.to_datetime(data['IdDimDatum'].astype(str), format='%Y%m%d')
+data['date'] = pd.to_datetime(data['date']).dt.date
+data['passeer_datetime'] = data['date'].map(str) + ' ' + data['Passeertijd'].map(str) 
+data['passeer_datetime'] =  pd.to_datetime(data['passeer_datetime'], infer_datetime_format=True)
+
+data['dep_datetime'] = data['date'].map(str) + ' ' + data['RitVertrekTijd'].map(str) 
+data['dep_datetime'] =  pd.to_datetime(data['dep_datetime'], infer_datetime_format=True)
+
+# data.drop(['date'], axis=1, inplace=True)
+
+# convert datetime to millisecond 
+def conv_time_to_mils(date_time):
+    return date_time.timestamp() * 1000
+
+data['passeer_datetime'] = data['passeer_datetime'].apply(conv_time_to_mils)
+data['dep_datetime'] = data['dep_datetime'].apply(conv_time_to_mils)
+
+#%%
+''' Testing the model only for one day '''
+# select the date
+test_date = 20220211
+test_data = data[data.IdDimDatum == test_date]
+
+
+
+
+list_trip = test_data.Ritnummer.tolist() 
+trips = []
+trips = [trips.append(x) for x in list_trip if x not in trips]
+
+#%% create nested dictionary for trip details
+# passing time from the stop
+passing_time = {k: f.groupby('Naam_halte')['passeer_datetime'].apply(list).to_dict() for k, f in test_data.groupby('Ritnummer')}
+# departure time from the first stop 
+dep_time = test_data.set_index('Ritnummer')['RitVertrekTijd'].to_dict()
+
+
+
+dep = {}
+for key, value in passing_time.items():
+
+    for d in value.values():
+        print(key, max(d))
+
+apply(lambda x: dict(zip(x['IdDimHalte'], x['RitVertrekTijd'])))
+dep_time = dep_time.to_dict()
+
+min = {}
+for key, value in dep_time.items:
+    min = value.min()
+
+dep_time = [dep_time.append(d) for d in test_data.RitVertrekTijd.min()]
+
+
+
+
+trip_dict = test_data.set_index("Ritnummer").T.to_dict()
 
 T = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
 
