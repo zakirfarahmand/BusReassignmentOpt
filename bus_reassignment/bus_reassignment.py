@@ -12,9 +12,10 @@ from datetime import datetime
 import random
 import pyodbc
 # import dataset 
-data = pd.read_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/data_enschede.csv',
-                    sep=';')
+data = pd.read_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/data_enschede.csv', sep=';')
 data.drop('Unnamed: 0', axis=1, inplace=True)
+# replace the NaN values with 0
+data['Bezetting'] = data['Bezetting'].fillna(0)
 
 # convert datum and ritvertrektijd to datetime format 
 data['date'] = pd.to_datetime(data['IdDimDatum'].astype(str), format='%Y%m%d')
@@ -39,18 +40,87 @@ data['dep_datetime'] = data['dep_datetime'].apply(conv_time_to_mils)
 # select the date
 test_date = 20220211
 test_data = data[data.IdDimDatum == test_date]
+test_data["ex_capacity"] = test_data['Bezetting'].apply(lambda x: x - 50 if (x > 50) else 0)
+
+
+# list of trips
+trip_list = test_data['Ritnummer']
+trip_list = trip_list.drop_duplicates(keep='first').tolist()
+
+
+class Trips():
+    def __init__(self, trip, dep_stop, dep_time):
+        self.trip = trip
+        self.dep_stop = dep_stop 
+        self.dep_time = dep_time
 
 
 
 
-list_trip = test_data.Ritnummer.tolist() 
-trips = []
-trips = [trips.append(x) for x in list_trip if x not in trips]
+# depature time of trips from the first stop 
+dep_time = test_data[['Ritnummer', 'IdDimHalte', 'RitVertrekTijd']]
+dep_time = dep_time.drop_duplicates(keep='first')
+
+dictionary = dep_time.to_dict()
+multi = {}
+trip = {}
+dep_stop = {}
+dep = {}
+for i in dep_time.Ritnummer:
+    l = [dep_time['Ritnummer'][i], dep_time['IdDimHalte'][i], dep_time['RitVertrekTijd'][i]]
+    multi[i] = l
+
+
+# create nested dictionary 
+Occupancy = {k: f.groupby('Naam_halte')['Bezetting'].apply(list).to_dict() for k, f in test_data.groupby('Ritnummer')}
+
+dep_time = {k: f.groupby('RitVertrekTijd').apply(list).todict() for k, f in test_data.groupby("Ritnummer")} 
+
+def dict_walk(d):
+    for k, v in d.items():
+        if type(v) == dict:   # option 1 with “type()”
+        #if isinstance(v, dict):   # option 2 with “isinstance()”
+            print(k)   # this line is for printing each nested key 
+            dict_walk(v)
+        else:
+            print('not a dict', k, ': ', v)
+  
+dict_walk(Occupancy)
+
+
+def extract_overcrowded_trip(my_dict):
+    A = [] # list of overcrowded trips
+    for element in my_dict:
+        for key, value in element.items():
+            print(value)
+
 
 #%% create nested dictionary for trip details
 # passing time from the stop
 passing_time = {k: f.groupby('Naam_halte')['passeer_datetime'].apply(list).to_dict() for k, f in test_data.groupby('Ritnummer')}
 # departure time from the first stop 
+
+trip = [i for i in trip_list]
+dep_time = {}
+dep_stop = {}
+
+for i in trip:
+    dep_time[i] = test_data['RitVertrekTijd'][i]
+
+
+multi = {}
+for i in test_data['Ritnummer']:
+    l = []
+
+dep = {}
+for t in trip:
+    for i in test_data.IdDimHalte:
+        dep[t,i] = test_data.RitVertrekTijd
+
+trip, dep_time = gp.multidict({
+    for t in test_data['Ritnummer']:
+      t  
+})
 dep_time = test_data.set_index('Ritnummer')['RitVertrekTijd'].to_dict()
 
 
