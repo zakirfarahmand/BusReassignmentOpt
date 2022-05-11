@@ -1,11 +1,10 @@
 # import libraries
-from cgi import test
-from doctest import testfile
 import gurobipy as gp
 from gurobipy import GRB
 from gurobipy import multidict, tuplelist, quicksum
 import numpy as np
-import pandas as pd 
+import pandas as pd
+from pygments import highlight 
 import scipy.sparse as sp
 import time
 from datetime import datetime
@@ -16,50 +15,99 @@ data = pd.read_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Docume
 data.drop('Unnamed: 0', axis=1, inplace=True)
 # replace the NaN values with 0
 data['Bezetting'] = data['Bezetting'].fillna(0)
-
-# convert datum and ritvertrektijd to datetime format 
-data['date'] = pd.to_datetime(data['IdDimDatum'].astype(str), format='%Y%m%d')
-data['date'] = pd.to_datetime(data['date']).dt.date
+# departure and passing time to datetime format 
 data['passeer_datetime'] = data['date'].map(str) + ' ' + data['Passeertijd'].map(str) 
 data['passeer_datetime'] =  pd.to_datetime(data['passeer_datetime'], infer_datetime_format=True)
 
 data['dep_datetime'] = data['date'].map(str) + ' ' + data['RitVertrekTijd'].map(str) 
 data['dep_datetime'] =  pd.to_datetime(data['dep_datetime'], infer_datetime_format=True)
 
-# data.drop(['date'], axis=1, inplace=True)
-
-# convert datetime to millisecond 
-def conv_time_to_mils(date_time):
-    return date_time.timestamp() * 1000
-
-data['passeer_datetime'] = data['passeer_datetime'].apply(conv_time_to_mils)
-data['dep_datetime'] = data['dep_datetime'].apply(conv_time_to_mils)
+# calculate in-vehicle crowd exceeding the capacity threshold 
+capacity_threshold = 50
+data["ex_capacity"] = data['Bezetting'].apply(lambda x: x - capacity_threshold if (x > capacity_threshold) else 0)
 
 #%%
 ''' Testing the model only for one day '''
 # select the date
-test_date = 20220211
-test_data = data[data.IdDimDatum == test_date]
-test_data["ex_capacity"] = test_data['Bezetting'].apply(lambda x: x - 50 if (x > 50) else 0)
+test_date = {'2022-02-11'}
+test_date = pd.DataFrame(test_date, columns=['date'])
+
+# select the test data set 
+test_data = {}
+# convert datetime to millisecond 
+def conv_time_to_mils(date_time):
+    return date_time.timestamp() * 1000
+
+test_data['passeer_datetime'] = test_data['passeer_datetime'].apply(conv_time_to_mils)
+test_data['dep_datetime'] = test_data['dep_datetime'].apply(conv_time_to_mils)
+
+# keep trips between 5:00 and 23:00
+# min time of the day 
+min_time = {'04:59:00'}
+min_time = pd.DataFrame(min_time, columns=['time'])
+sigma_min = pd.DataFrame((test_date['date'].map(str) + ' ' + min_time['time'].map(str)), columns=['datetime'])
+sigma_min['datetime'] = pd.to_datetime(sigma_min['datetime'], infer_datetime_format=True)
+sigma_min['datetime'] = sigma_min['datetime'].apply(conv_time_to_mils)
+
+# max time of the day 
+max_time = {'23:01:00'}
+max_time = pd.DataFrame(max_time, columns=['time'])
+sigma_max = pd.DataFrame((test_date['date'].map(str) + ' ' + max_time['time'].map(str)), columns=['datetime'])
+sigma_max['datetime'] = pd.to_datetime(sigma_max['datetime'], infer_datetime_format=True)
+sigma_max['datetime'] = sigma_max['datetime'].apply(conv_time_to_mils)
+
+test_data = test_data[test_data['dep_datetime'] > sigma_min['datetime']]
 
 
+#%%
+''' Sets and Parameters of the model '''
 # list of trips
 trip_list = test_data['Ritnummer']
 trip_list = trip_list.drop_duplicates(keep='first').tolist()
 
+# extract list of trip numbers where the demand exceeds the capacity threshoold 
+ex_capacity_trip = list(test_data[test_data['ex_capacity'] > 0]['Ritnummer'])
 
-class Trips():
-    def __init__(self, trip, dep_stop, dep_time):
-        self.trip = trip
-        self.dep_stop = dep_stop 
-        self.dep_time = dep_time
+# list of trips exceeding the capacity threshold
+A = test_data[test_data['Ritnummer'].isin(ex_capacity_trip)]
+# remove duplicates and keep the one with the highest values of Bezetting
+A = A.sort_values('Bezetting').drop_duplicates(subset=['Naam_halte', 'Passeertijd'], keep='last')
+A = A.sort_values(by=['Ritnummer', 'Passeertijd'], ascending=[False, True])
 
+# List of trips that could potetially be re-assigned 
+B = test_data[~test_data['Ritnummer'].isin(ex_capacity_trip)]
+# remove duplicates 
+B = B.sort_values('Bezetting').drop_duplicates(subset=['Naam_halte', 'Passeertijd'], keep='last')
+B = B.sort_values(by=['Ritnummer', 'Passeertijd'], ascending=[False, True])
 
+''' Comments:
+1. some trips on line 9 (Enschede - Hengelo) do not start from Enschede central station
+2. some trips on line 1 (De Posten - UT)
+3. Bezetting increases/decreases without changes in the number instappers/outstappers'''
 
-
+#%%
+''' 
+Model parameters
+ '''
 # depature time of trips from the first stop 
-dep_time = test_data[['Ritnummer', 'IdDimHalte', 'RitVertrekTijd']]
-dep_time = dep_time.drop_duplicates(keep='first')
+dep_time_A = A[['Ritnummer', 'Naam_halte', 'RitVertrekTijd', 'dep_datetime']]
+dep_time_A = dep_time_A.sort_values('dep_datetime').drop_duplicates(subset=['Ritnummer'], keep='first')
+dep_time_A_dict = dep_time_A.set_index(['Ritnummer', 'Naam_halte']).to_dict()['RitVertrekTijd']
+
+dep_time_B = B[['Ritnummer', 'Naam_halte', 'RitVertrekTijd', 'passeer_datetime']]
+dep_time_B = dep_time_B.sort_values('passeer_datetime').drop_duplicates(subset=['Ritnummer'], keep='first')
+dep_time_B_dict = dep_time_B.set_index(['Ritnummer', 'Naam_halte']).to_dict()['RitVertrekTijd']
+
+# occupancy data
+occ_A = A[['Ritnummer', 'IdDimHalte', 'Bezetting']]
+occ_A_dict = occ_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
+
+occ_A = A[['Ritnummer', 'IdDimHalte', 'Bezetting']]
+occ_A_dict = occ_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
+
+# trip - exceeding capacity threshold
+ex_capacity = test_data[['Ritnummer', 'IdDimHalte', 'ex_capacity']]
+ex_capacity = ex_capacity.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['ex_capacity']
 
 dictionary = dep_time.to_dict()
 multi = {}
