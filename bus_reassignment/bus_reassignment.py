@@ -33,32 +33,40 @@ test_date = {'2022-02-11'}
 test_date = pd.DataFrame(test_date, columns=['date'])
 
 # select the test data set 
-test_data = {}
-# convert datetime to millisecond 
-def conv_time_to_mils(date_time):
-    return date_time.timestamp() * 1000
+test_data = data[data['date'] == test_date.loc[0, 'date']]
 
-test_data['passeer_datetime'] = test_data['passeer_datetime'].apply(conv_time_to_mils)
-test_data['dep_datetime'] = test_data['dep_datetime'].apply(conv_time_to_mils)
+# convert datetime to millisecond 
+# def conv_time_to_mils(date_time):
+#     return date_time.timestamp() * 1000
+
+# test_data['passeer_datetime'] = test_data['passeer_datetime'].apply(conv_time_to_mils)
+# test_data['dep_datetime'] = test_data['dep_datetime'].apply(conv_time_to_mils)
 
 # keep trips between 5:00 and 23:00
 # min time of the day 
-min_time = {'04:59:00'}
-min_time = pd.DataFrame(min_time, columns=['time'])
-sigma_min = pd.DataFrame((test_date['date'].map(str) + ' ' + min_time['time'].map(str)), columns=['datetime'])
-sigma_min['datetime'] = pd.to_datetime(sigma_min['datetime'], infer_datetime_format=True)
-sigma_min['datetime'] = sigma_min['datetime'].apply(conv_time_to_mils)
+min_time = {'05:00:00'}
+min_time = pd.DataFrame(min_time, columns=['min_time'])
+test_date['min_time'] = min_time['min_time']
+test_date['min_datetime'] = test_date['date'].map(str) + ' ' + min_time['min_time'].map(str) 
+test_date['min_datetime'] =  pd.to_datetime(test_date['min_datetime'], infer_datetime_format=True)
+sigma_min = []
+sigma_min = test_date['min_datetime']
 
 # max time of the day 
-max_time = {'23:01:00'}
-max_time = pd.DataFrame(max_time, columns=['time'])
-sigma_max = pd.DataFrame((test_date['date'].map(str) + ' ' + max_time['time'].map(str)), columns=['datetime'])
-sigma_max['datetime'] = pd.to_datetime(sigma_max['datetime'], infer_datetime_format=True)
-sigma_max['datetime'] = sigma_max['datetime'].apply(conv_time_to_mils)
+max_time = {'23:00:00'}
+max_time = pd.DataFrame(max_time, columns=['max_time'])
+test_date['max_time'] = max_time['max_time']
+test_date['max_datetime'] = test_date['date'].map(str) + ' ' + max_time['max_time'].map(str) 
+sigma_max = []
+sigma_max = test_date['max_datetime']
+# trips in between 5:00 and 23:00
+test_data = test_data[test_data.loc[:, 'dep_datetime'] >= sigma_min[0]]
+test_data = test_data[test_data.loc[:, 'dep_datetime'] <= sigma_max[0]]
 
-test_data = test_data[test_data['dep_datetime'] > sigma_min['datetime']]
+test_data = test_data.sort_values(by=['Ritnummer', 'passeer_datetime'], ascending=[False, True])
 
-
+# export data for Sander
+test_data.to_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/test_data.csv', sep=";")
 #%%
 ''' Sets and Parameters of the model '''
 # list of trips
@@ -80,6 +88,7 @@ B = test_data[~test_data['Ritnummer'].isin(ex_capacity_trip)]
 B = B.sort_values('Bezetting').drop_duplicates(subset=['Naam_halte', 'Passeertijd'], keep='last')
 B = B.sort_values(by=['Ritnummer', 'Passeertijd'], ascending=[False, True])
 
+
 ''' Comments:
 1. some trips on line 9 (Enschede - Hengelo) do not start from Enschede central station
 2. some trips on line 1 (De Posten - UT)
@@ -98,102 +107,42 @@ dep_time_B = B[['Ritnummer', 'Naam_halte', 'RitVertrekTijd', 'passeer_datetime']
 dep_time_B = dep_time_B.sort_values('passeer_datetime').drop_duplicates(subset=['Ritnummer'], keep='first')
 dep_time_B_dict = dep_time_B.set_index(['Ritnummer', 'Naam_halte']).to_dict()['RitVertrekTijd']
 
+
+# arrival to the last stop and travel time 
+# calculate travel time over each trip 
+def cal_travel_time(arr_time, dep_time):
+    travel_time = ''
+    travel_time = arr_time - dep_time
+    return travel_time.dt.total_seconds()/60
+
+''' For later: travel time should be fixed per bus line '''
+
+arr_time_A = A[['Ritnummer', 'Naam_halte', 'dep_datetime', 'passeer_datetime']]
+arr_time_A = arr_time_A.loc[arr_time_A.groupby('Ritnummer')['passeer_datetime'].idxmax()]
+arr_time_A['travel_time'] = cal_travel_time(arr_time_A['passeer_datetime'], arr_time_A['dep_datetime'])
+
+arr_time_B = B[['Ritnummer', 'Naam_halte', 'dep_datetime', 'passeer_datetime']]
+arr_time_B = arr_time_B.loc[arr_time_B.groupby('Ritnummer')['passeer_datetime'].idxmax()]
+arr_time_B['travel_time'] = cal_travel_time(arr_time_B['passeer_datetime'], arr_time_B['dep_datetime'])
+
 # occupancy data
 occ_A = A[['Ritnummer', 'IdDimHalte', 'Bezetting']]
 occ_A_dict = occ_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
 
-occ_A = A[['Ritnummer', 'IdDimHalte', 'Bezetting']]
-occ_A_dict = occ_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
+occ_B = B[['Ritnummer', 'IdDimHalte', 'Bezetting']]
+occ_B_dict = occ_B.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
 
 # trip - exceeding capacity threshold
-ex_capacity = test_data[['Ritnummer', 'IdDimHalte', 'ex_capacity']]
-ex_capacity = ex_capacity.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['ex_capacity']
+ex_cap_A = A[['Ritnummer', 'IdDimHalte', 'ex_capacity']]
+ex_cap_A_dict = ex_cap_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['ex_capacity']
 
-dictionary = dep_time.to_dict()
-multi = {}
-trip = {}
-dep_stop = {}
-dep = {}
-for i in dep_time.Ritnummer:
-    l = [dep_time['Ritnummer'][i], dep_time['IdDimHalte'][i], dep_time['RitVertrekTijd'][i]]
-    multi[i] = l
+ex_cap_B = B[['Ritnummer', 'IdDimHalte', 'ex_capacity']]
+ex_cap_B_dict = ex_cap_B.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['ex_capacity']
 
 
-# create nested dictionary 
-Occupancy = {k: f.groupby('Naam_halte')['Bezetting'].apply(list).to_dict() for k, f in test_data.groupby('Ritnummer')}
-
-dep_time = {k: f.groupby('RitVertrekTijd').apply(list).todict() for k, f in test_data.groupby("Ritnummer")} 
-
-def dict_walk(d):
-    for k, v in d.items():
-        if type(v) == dict:   # option 1 with “type()”
-        #if isinstance(v, dict):   # option 2 with “isinstance()”
-            print(k)   # this line is for printing each nested key 
-            dict_walk(v)
-        else:
-            print('not a dict', k, ': ', v)
-  
-dict_walk(Occupancy)
+#%%
 
 
-def extract_overcrowded_trip(my_dict):
-    A = [] # list of overcrowded trips
-    for element in my_dict:
-        for key, value in element.items():
-            print(value)
-
-
-#%% create nested dictionary for trip details
-# passing time from the stop
-passing_time = {k: f.groupby('Naam_halte')['passeer_datetime'].apply(list).to_dict() for k, f in test_data.groupby('Ritnummer')}
-# departure time from the first stop 
-
-trip = [i for i in trip_list]
-dep_time = {}
-dep_stop = {}
-
-for i in trip:
-    dep_time[i] = test_data['RitVertrekTijd'][i]
-
-
-multi = {}
-for i in test_data['Ritnummer']:
-    l = []
-
-dep = {}
-for t in trip:
-    for i in test_data.IdDimHalte:
-        dep[t,i] = test_data.RitVertrekTijd
-
-trip, dep_time = gp.multidict({
-    for t in test_data['Ritnummer']:
-      t  
-})
-dep_time = test_data.set_index('Ritnummer')['RitVertrekTijd'].to_dict()
-
-
-
-dep = {}
-for key, value in passing_time.items():
-
-    for d in value.values():
-        print(key, max(d))
-
-apply(lambda x: dict(zip(x['IdDimHalte'], x['RitVertrekTijd'])))
-dep_time = dep_time.to_dict()
-
-min = {}
-for key, value in dep_time.items:
-    min = value.min()
-
-dep_time = [dep_time.append(d) for d in test_data.RitVertrekTijd.min()]
-
-
-
-
-trip_dict = test_data.set_index("Ritnummer").T.to_dict()
-
-T = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
 
 
 bus_stops = ['ECS', "UT", "Wesselerbrink", "Deppenbroek", "Glanerbrug", "Stroinslanden",
