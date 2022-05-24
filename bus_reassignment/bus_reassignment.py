@@ -10,6 +10,8 @@ import time
 from datetime import datetime
 import random
 import pyodbc
+from itertools import combinations, product
+import statistics
 # import dataset 
 data = pd.read_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/data_enschede.csv', sep=';')
 data.drop('Unnamed: 0', axis=1, inplace=True)
@@ -33,7 +35,7 @@ test_date = {'2022-02-11'}
 test_date = pd.DataFrame(test_date, columns=['date'])
 
 # select the test data set 
-test_data = data[data['date'] == test_date.loc[0, 'date']]
+test_data = data[data['IdDimDatum'] == 20220211]
 
 # convert datetime to millisecond 
 # def conv_time_to_mils(date_time):
@@ -42,9 +44,9 @@ test_data = data[data['date'] == test_date.loc[0, 'date']]
 # test_data['passeer_datetime'] = test_data['passeer_datetime'].apply(conv_time_to_mils)
 # test_data['dep_datetime'] = test_data['dep_datetime'].apply(conv_time_to_mils)
 
-# keep trips between 5:00 and 23:00
-# min time of the day 
-min_time = {'05:00:00'}
+# time window-frame of the optimization
+# lower bound
+min_time = {'07:30:00'}
 min_time = pd.DataFrame(min_time, columns=['min_time'])
 test_date['min_time'] = min_time['min_time']
 test_date['min_datetime'] = test_date['date'].map(str) + ' ' + min_time['min_time'].map(str) 
@@ -52,8 +54,9 @@ test_date['min_datetime'] =  pd.to_datetime(test_date['min_datetime'], infer_dat
 sigma_min = []
 sigma_min = test_date['min_datetime']
 
-# max time of the day 
-max_time = {'23:00:00'}
+
+# upper bound
+max_time = {'8:30:00'}
 max_time = pd.DataFrame(max_time, columns=['max_time'])
 test_date['max_time'] = max_time['max_time']
 test_date['max_datetime'] = test_date['date'].map(str) + ' ' + max_time['max_time'].map(str) 
@@ -63,7 +66,7 @@ sigma_max = test_date['max_datetime']
 test_data = test_data[test_data.loc[:, 'dep_datetime'] >= sigma_min[0]]
 test_data = test_data[test_data.loc[:, 'dep_datetime'] <= sigma_max[0]]
 
-test_data = test_data.sort_values(by=['Ritnummer', 'passeer_datetime'], ascending=[False, True])
+test_data = test_data.sort_values(by=['Ritnummer', 'dep_datetime'], ascending=[True, False])
 
 # export data for Sander
 test_data.to_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/test_data.csv', sep=";")
@@ -80,13 +83,19 @@ ex_capacity_trip = list(test_data[test_data['ex_capacity'] > 0]['Ritnummer'])
 A = test_data[test_data['Ritnummer'].isin(ex_capacity_trip)]
 # remove duplicates and keep the one with the highest values of Bezetting
 A = A.sort_values('Bezetting').drop_duplicates(subset=['Naam_halte', 'Passeertijd'], keep='last')
-A = A.sort_values(by=['Ritnummer', 'Passeertijd'], ascending=[False, True])
+A = A.sort_values(by=['Ritnummer', 'Passeertijd'], ascending=[True, False])
 
 # List of trips that could potetially be re-assigned 
+
+'''
+For creating list B, these preconditions should met:
+   1. trips should depart before depature time of trips in A
+   2. their following trips should not be overcrowded 
+'''
 B = test_data[~test_data['Ritnummer'].isin(ex_capacity_trip)]
 # remove duplicates 
 B = B.sort_values('Bezetting').drop_duplicates(subset=['Naam_halte', 'Passeertijd'], keep='last')
-B = B.sort_values(by=['Ritnummer', 'Passeertijd'], ascending=[False, True])
+B = B.sort_values(by=['Ritnummer', 'Passeertijd'], ascending=[True, False])
 
 
 ''' Comments:
@@ -98,6 +107,58 @@ B = B.sort_values(by=['Ritnummer', 'Passeertijd'], ascending=[False, True])
 ''' 
 Model parameters
  '''
+
+# pairing list of trips
+trips_A = A['Ritnummer'].drop_duplicates(keep='first').tolist()
+trips_B = B['Ritnummer'].drop_duplicates(keep='first').tolist()
+
+def pairs(*lists):
+    for t in combinations(lists, 2):
+        for pair in product(*t):
+            yield pair
+
+trip_pairs = [pair for pair in pairs(trips_B, trips_A)]
+
+# occupancy data
+occ_A = A[['Ritnummer', 'IdDimHalte', 'Bezetting']]
+occ_A_dict = occ_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
+
+occ_B = B[['Ritnummer', 'IdDimHalte', 'Bezetting']]
+occ_B_dict = occ_B.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
+
+# trip - exceeding capacity threshold
+ex_cap_A = A[['Ritnummer', 'IdDimHalte', 'ex_capacity']]
+ex_cap_A_dict = ex_cap_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['ex_capacity']
+
+ex_cap_B = B[['Ritnummer', 'IdDimHalte', 'ex_capacity']]
+ex_cap_B_dict = ex_cap_B.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['ex_capacity']
+
+''' Calculating waiting time
+parameters:
+1. headway mean 
+2. headway variance '''
+
+h_data = test_data[['Ritnummer', 'PublieksLijnnr', 'dep_datetime', 'RitVertrekTijd']]
+h_data = h_data.sort_values('dep_datetime').drop_duplicates(subset=['Ritnummer'], keep='first')
+h_data = h_data.sort_values(by=['PublieksLijnnr', 'dep_datetime'], ascending=[False, True])
+
+h_data['h_headway'] = h_data.groupby('PublieksLijnnr')['dep_datetime'].transform(pd.Series.diff)
+h_data['h_headway'] = (h_data['h_headway'].dt.total_seconds())/60
+h_data['h_headway'] = h_data['h_headway'].fillna(method='bfill')
+
+h_data['h_var'] = h_data.groupby('PublieksLijnnr')['h_headway'].transform(statistics.variance)
+h_data['h_mean'] = h_data.groupby('PublieksLijnnr')['h_headway'].transform(statistics.mean)
+
+def cal_waiting_time(mean, var):
+   waiting_time = mean * 0.5 + 0.5 * (var / mean)
+   return waiting_time
+
+h_data['waiting_time'] = cal_waiting_time(h_data['h_mean'], h_data['h_var']) 
+# waiting time as dictionary 
+waiting_time_dict = h_data.set_index(['Ritnummer', 'PublieksLijnnr']).to_dict()['waiting_time']
+
+
+
 # depature time of trips from the first stop 
 dep_time_A = A[['Ritnummer', 'Naam_halte', 'RitVertrekTijd', 'dep_datetime']]
 dep_time_A = dep_time_A.sort_values('dep_datetime').drop_duplicates(subset=['Ritnummer'], keep='first')
@@ -125,26 +186,68 @@ arr_time_B = B[['Ritnummer', 'Naam_halte', 'dep_datetime', 'passeer_datetime']]
 arr_time_B = arr_time_B.loc[arr_time_B.groupby('Ritnummer')['passeer_datetime'].idxmax()]
 arr_time_B['travel_time'] = cal_travel_time(arr_time_B['passeer_datetime'], arr_time_B['dep_datetime'])
 
-# occupancy data
-occ_A = A[['Ritnummer', 'IdDimHalte', 'Bezetting']]
-occ_A_dict = occ_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
 
-occ_B = B[['Ritnummer', 'IdDimHalte', 'Bezetting']]
-occ_B_dict = occ_B.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['Bezetting']
+# calculate deadhead time 
 
-# trip - exceeding capacity threshold
-ex_cap_A = A[['Ritnummer', 'IdDimHalte', 'ex_capacity']]
-ex_cap_A_dict = ex_cap_A.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['ex_capacity']
 
-ex_cap_B = B[['Ritnummer', 'IdDimHalte', 'ex_capacity']]
-ex_cap_B_dict = ex_cap_B.set_index(['Ritnummer', 'IdDimHalte']).to_dict()['ex_capacity']
+# first and last stop for each trip 
+first_last_stop = test_data[['Ritnummer', 'IdDimHalte', 'Naam_halte', 'passeer_datetime', 'dep_datetime']]
+first_stop = first_last_stop.loc[first_last_stop.groupby('Ritnummer')['passeer_datetime'].idxmin()]
+last_stop = first_last_stop.loc[first_last_stop.groupby('Ritnummer')['passeer_datetime'].idxmax()]
+
+
+# deadhead cost
+# trip arc and travel time between the first and last stop of each line
+arc, travel_time = gp.multidict({
+    ("ECS", "UT", 1): 35, 
+    ("UT", "ECS", 1): 32,
+    ("ECS", "Wesselerbrink", 1): 25,
+    ("Wesselerbrink", "ECS", 1): 32, 
+    ("ECS", "Deppenbroek", 2): 35,
+    ("Deppenbroek", "ECS", 2): 40,
+    ("ECS", "Glanerbrug", 3): 50, 
+    ("Glanerbrug", "ECS", 3): 45,
+    ("ECS", "Stroinslanden", 4): 28, 
+    ("Stroinslanden", "ECS", 4): 33,
+    ("ECS", "Zwering", 5): 41, 
+    ("Zwering", "ECS", 5): 39,
+    ("ECS", "Stokhorst", 6): 32,
+    ("Stokhorst", "ECS", 6): 28,
+    ("ECS", "Marssteden", 7): 42,
+    ("Marssteden", "ECS", 7): 48, 
+    ("ECS", "Hengelo", 9): 35, 
+    ("Hengelo", "ECS", 9): 35
+})
+
+
+# Writing mathematical formulation
+"""
+Objective 1: minimize waiting time of stranded passengers (re-assignment vs cancellation)
+
+objective 2: minimize deadhead cost (from the last stop of timetabled trip to the first stop of re-assigned trip and back to the first stop of following trip operated by the same bus)
+
+Constratins:
+   1. arrival time to the first stop of re-assigned trip <= depature of the crowded trip
+   2. Re-assignment: a cancelled trip can be only re-assigned once and only one bus trip is re-assigned before an overcrowded trip 
+   3. imposed cancellation: If the bus operating the cancelled trip cannot arrive for its next trip, its following trip will also be cancelled. 
+   4. max imposed cancellation is 2
+
+"""
+
+model = gp.Model("bus_reassignment")
+
+
+
+
+
+
+
+
+
+
 
 
 #%%
-
-
-
-
 bus_stops = ['ECS', "UT", "Wesselerbrink", "Deppenbroek", "Glanerbrug", "Stroinslanden",
      "Zwering", "Stokhorst", "Marssteden", "Hengelo"]
 

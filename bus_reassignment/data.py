@@ -13,6 +13,7 @@ data['date'] = data.apply(
 # select only enschede lines 
 enschede_lines = pd.read_csv(r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/Enschede_lines.csv',
                     sep=';') 
+
 # enschede data 
 enschede_data = pd.merge(data, enschede_lines, on=["IdDimLijnRichting", "IdDimLijnRichting"])
 
