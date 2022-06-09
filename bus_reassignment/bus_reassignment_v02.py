@@ -154,70 +154,8 @@ for key1, val1 in last_lat_lon.items():
 deadhead = dict(deadhead)
 
 
-# for key, value in deadhead.items():
-#     if int(value) <= 1:
-#         deadhead[key] = 0
-#     else:
-#         deadhead[key] * 60000
-
-
-# def f(x): return calculate_distance(
-#     x['lat_last'], x['long_last'], x['lat_first'], x['long_first'])
-
-
-# deadhead_data['deadhead_time'] = deadhead_data.apply(f, axis=1).astype('float')
-# # if two stops are located at the same station, the deadhead time is set to zero
-
-
-# deadhead_data['deadhead_time'] = deadhead_data['deadhead_time'].apply(
-#     lambda x: x * 60000 if x > 1 else 0)
-
-# deadhead_data.drop(['IdDimHalte_x', 'IdDimHalte_y'], axis=1, inplace=True)
-
-
-# %%
-
-
 # %%
 ''' data pre-processing '''
-
-
-# preprocessing_data = test_data.sort_values(
-#     by=['PublieksLijnnr', 'dep_datetime']).drop_duplicates(subset=['Ritnummer'], keep='first')
-
-# lines_dict = {k: list(v)
-#               for k, v in preprocessing_data.groupby('PublieksLijnnr')['Ritnummer']}
-
-# bus_trips_dict = {k: list(v)
-#                   for k, v in preprocessing_data.groupby('IdDimVoertuig')['Ritnummer']}
-
-
-# first_stop_dict = {k: v for k, v in zip(
-#     preprocessing_data['Ritnummer'], preprocessing_data['IdDimHalte'])}
-
-# last_stop = test_data.sort_values(by=['PublieksLijnnr', 'dep_datetime']).drop_duplicates(
-#     subset=['Ritnummer'], keep='last')
-
-# last_stop_dict = {k: v for k, v in zip(
-#     last_stop['Ritnummer'], last_stop['IdDimHalte'])}
-
-
-# def get_key_from_value(d, val):
-#     keys = [k for k, v in d.items() if val in v]
-#     if keys:
-#         return keys[0]
-#     return None
-
-# key = get_key_from_value(bus_trips_dict, 42657)
-# print(key)
-
-# test_data['passeer_datetime'] = test_data['passeer_datetime'].apply(conv_time_to_mils)
-# test_data['dep_datetime'] = test_data['dep_datetime'].apply(conv_time_to_mils)
-
-
-# time window-frame of the optimization
-# minimum time frame should be one hour and maximum should be one day
-# lower bound
 
 
 def preprocessing(data):
@@ -229,6 +167,8 @@ def preprocessing(data):
         by=['PublieksLijnnr', 'dep_datetime']).drop_duplicates(subset=['Ritnummer'], keep='first')
     line_trips = {k: list(v)
                   for k, v in preprocessing_data.groupby('PublieksLijnnr')['Ritnummer']}
+    trip_line = {k: v for k, v in zip(
+        preprocessing_data['Ritnummer'], preprocessing_data['PublieksLijnnr'])}
     bus_trips = {k: list(v)
                  for k, v in preprocessing_data.groupby('IdDimVoertuig')['Ritnummer']}
     first_stop = {k: v for k, v in zip(
@@ -239,10 +179,10 @@ def preprocessing(data):
     last_stop = {k: v for k, v in zip(
         last_stop['Ritnummer'], last_stop['IdDimHalte'])}
 
-    return line_trips, bus_trips, first_stop, last_stop
+    return line_trips, trip_line, bus_trips, first_stop, last_stop
 
 
-line_trips_dict, bus_trips_dict, first_stops_dict, last_stops_dict = preprocessing(
+line_trips_dict, trip_line_dict, bus_trips_dict, first_stops_dict, last_stops_dict = preprocessing(
     test_data)
 
 # %%
@@ -317,8 +257,6 @@ travel_time_dict = arr_time.set_index(['Ritnummer']).to_dict()['travel_time']
 
 ''' list of to assign and re-assign should only from Enschede bus lines '''
 
-
-# trips in between 5:00 and 23:00
 
 # calculate in-vehicle crowd exceeding the capacity threshold
 capacity_threshold = 35
@@ -411,15 +349,6 @@ for i in range(0, length-1):
     i+1
 preceeding_trip_dict = dict(preceeding_trip)
 
-# # create list of following trips by merging datasets
-# trip_ftrip_merge = trip_reAssign.merge(
-#     trip_bus, left_on='IdDimVoertuig', right_on='IdDimVoertuig')
-# # following trips for any trip in reAssign
-# trip_ftrip_merge = trip_ftrip_merge[trip_ftrip_merge['dep_datetime_x'] < trip_ftrip_merge['dep_datetime_y']]
-
-# # # list of all stops
-# following_trips_dict = {k: list(v)
-#                         for k, v in trip_ftrip_merge.groupby('Ritnummer_x')['Ritnummer_y']}
 
 '''
 For creating list B, these preconditions should met:
@@ -428,39 +357,11 @@ For creating list B, these preconditions should met:
 '''
 
 
-# deadhead time dictionary: from stop a to stop b
-# deadhead_dict = {(i, j): k for i, j, k in zip(
-#     deadhead_data.last_stop, deadhead_data.first_stop, deadhead_data.deadhead_time)}
-# # first stop dictionary
-# first_stop_dict = {i:k for i,k in zip(first_stop.Ritnummer, first_stop.IdDimHalte)}
-# # last stop dictionary
-# last_stop_dict = {i:k for i,k in zip(last_stop.Ritnummer, last_stop.IdDimHalte)}
-
-
-# def pairs(*lists):
-#     for t in combinations(lists, 2):
-#         for pair in product(*t):
-#             yield pair
-# trip_pairs = [pair for pair in pairs(toAssign, reAssign)]
-
-# pairing trips with precondition
-
-# def time(i, k, j):
-#     a = []
-#     last_i = last_stops_dict[i]
-#     first_j = first_stops_dict[j]
-#     last_j = last_stops_dict[j]
-#     first_k = first_stops_dict[k]
-#     a += arr_time_dict[i] + int(deadhead[(last_i, first_j)]) * 60000 + travel_time_dict[j] + int(deadhead[(last_j, first_k)]) * 60000
-#     return a
-
-
 def bus_reassginment(toAssign, reAssign, waitingTime, demand, exceedingCapacity, stops):
     model = gp.Model('Bus Reassignment')
     epsilon = 120000  # this is the time for boarding passengers
     bigM = 1.64456466e+13  # big value
     deadhead_threshold = 900000  # deadhead time threshold is set 15 minutes
-    earliest_depart = 600000  # the earliest departure time of the re-assigned bus should not be more than 10 minutes before the departure of an overcrowded trip
     # create pair of potential trips for re-assignemnt and trips that they could be re-assigned before
     paired_trips = tuplelist()
     for i in reAssign:
@@ -537,34 +438,42 @@ def bus_reassginment(toAssign, reAssign, waitingTime, demand, exceedingCapacity,
         if i[0] not in [a[0] for a in imposed_arc]:
             print(
                 "No additional trip(s) is cancelled as a result of cancelling trip {}".format(i[0]) + ' ' + 'being re-assigned before trip {}'.format(i[1]))
-    return model
+    return model, active_arcs, imposed_arc
 
 
-bus_reassginment(toAssign, reAssign, waiting_time_dict, demand_dict,
-                 ex_capacity_dict, stops_dict)
+mode, active_arcs, imposed_arc = bus_reassginment(toAssign, reAssign, waiting_time_dict, demand_dict,
+                                                  ex_capacity_dict, stops_dict)
 
 
 # # print optimal solutions
-
-# paired_trips = tuplelist()
-# epsilon = 120000
-# for i in reAssign:
-#     for j in toAssign:
-#         stop1 = first_stops_dict[i]
-#         stop2 = first_stops_dict[j]
-#         if dep_time_dict[i] + deadhead[(stop1, stop2)] + epsilon <= dep_time_dict[j]:
-#             paired_trips += [(i, j)]
-# active_arcs = [a for a in paired_trips if model.__data1[a].x > 0.99]
+def con_milsec_datetime(x):
+    date_time = dt.datetime.fromtimestamp(x/1000.0)
+    return date_time
 
 
-# imposed_cancellation = tuplelist()
-# for i, j in paired_trips:
-#     for k in following_trips_dict[i]:
-#         if (dep_time_dict[i] + deadhead[(first_stops_dict[i], first_stops_dict[j])] + travel_time_dict[j] + deadhead[(last_stops_dict[j], first_stops_dict[k])] <= dep_time_dict[k]):
-#             imposed_cancellation += [(i, j, k)]
-
-# imposed_arc = [a for a in imposed_cancellation if model.__data2[a].x > 0.99]
-
+for a in active_arcs:
+    print(colored('Description of cancelled trip(s)', 'green', attrs=['bold']))
+    print("Cancelled trip number: {}".format(a[0]))
+    line_number = trip_line_dict[a[0]]
+    dep_time = con_milsec_datetime(dep_time_dict[a[0]])
+    deadhead_time = (
+        deadhead[(first_stops_dict[a[1]], first_stops_dict[a[0]])])/60000
+    reassigned_dep = con_milsec_datetime(
+        dep_time_dict[a[0]] + deadhead[(first_stops_dict[a[1]], first_stops_dict[a[0]])])
+    next_planned_trip = following_trips_dict[a[0]][0]
+    return_to_next_trip = con_milsec_datetime(dep_time_dict[a[0]] + travel_time_dict[a[1]] + deadhead[(
+        first_stops_dict[a[1]], first_stops_dict[a[0]])] + deadhead[(last_stops_dict[a[1]], first_stops_dict[next_planned_trip])])
+    next_planned_trip_dep = con_milsec_datetime(
+        dep_time_dict[next_planned_trip])
+    print("Planned Line Number: {}".format(line_number))
+    print("Planned Departure time from first stop: {}".format(dep_time))
+    print("Deadhead time of trip {}".format(a[0]) + ' from its first stop' +
+          " to the first stop of trip {}".format(a[0]) + ' ' + "(min): {}".format(deadhead_time))
+    print("Departure time after re-assignment: {}".format(reassigned_dep))
+    print("Return to the first stop of next planned trip {}".format(
+        next_planned_trip) + ":" + " {}".format(return_to_next_trip))
+    print("Departure time of next planned trip for bus operating {}".format(
+        a[0]) + "" + ": {}".format(next_planned_trip_dep))
 
 # # list of cancelled trips
 # cancelled = [a[0] for a in active_arcs]
@@ -576,5 +485,3 @@ bus_reassginment(toAssign, reAssign, waiting_time_dict, demand_dict,
 
 # model.computeIIS()
 # model.write("model.ilp")
-
-''' Plot feasible connection of trips with respect to depature time and XY locations '''
