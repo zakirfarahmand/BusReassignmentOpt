@@ -135,9 +135,9 @@ deadhead_data.rename(
 
 
 def calculate_distance(lat1, lon1, lat2, lon2):
-
     distance = gmaps.distance_matrix([str(lat1) + " " + str(lon1)],
                                      [str(lat2) + " " + str(lon2)],
+                                     departure_time=datetime.now().timestamp(),
                                      mode='driving')['rows'][0]['elements'][0]['duration']['text'].split(' ')[0]
     distance = int(distance) * 60000
     return distance
@@ -382,6 +382,11 @@ def bus_reassginment(toAssign, reAssign, waitingTime, demand, exceedingCapacity,
     imposed_var = model.addVars(
         imposed_cancellation, vtype=GRB.BINARY, name="x[%s, %s, %s]" % (i, j, k))
     model.update()
+    # objective
+    obj = quicksum(0.5 * reassign_var[i, j] * exceedingCapacity[j, s] * waitingTime[j] for i, j in paired_trips for s in stops[j]) + quicksum(3 * (1-reassign_var[i, j]) * exceedingCapacity[j, s] * waitingTime[j] for i, j in paired_trips for s in stops[j]) + quicksum(2 * reassign_var[i, j] * demand[i, s]
+                                                                                                                                                                                                                                                                           * waitingTime[i] for i, j in paired_trips for s in stops[i]) + quicksum(2 * imposed_var[i, j, k] * demand[k, s] * waitingTime[k] for i, j in paired_trips for k in following_trips_dict[i] for s in stops[k])  # + quicksum(0.001 * imposed_var[i,j,k] for i, j, k in imposed_cancellation)
+    model.setObjective(obj, GRB.MINIMIZE)
+    model.update()
     # add constraints
     # assign only one trip
     model.addConstrs((reassign_var.sum('*', j) <=
@@ -412,23 +417,18 @@ def bus_reassginment(toAssign, reAssign, waitingTime, demand, exceedingCapacity,
                          2 for k in following_trips_dict[i]))
     model.update()
 
-    # objective
-    obj = quicksum(0.5 * reassign_var[i, j] * exceedingCapacity[j, s] * waitingTime[j] for i, j in paired_trips for s in stops[j]) + quicksum(3 * (1-reassign_var[i, j]) * exceedingCapacity[j, s]
-                                                                                                                                              * waitingTime[j] for i, j in paired_trips for s in stops[j]) + quicksum(2 * reassign_var[i, j] * demand[i, s] * waitingTime[i] for i, j in paired_trips for s in stops[i]) + quicksum(1 * imposed_var[i, j, k] * demand[k, s] * waitingTime[k] for i, j in paired_trips for k in following_trips_dict[i] for s in stops[k])  # + quicksum(0.001 * imposed_var[i,j,k] for i, j, k in imposed_cancellation)
-    model.setObjective(obj, GRB.MINIMIZE)
-    model.update()
     model.optimize()
     model.__data1 = reassign_var
     model.__data2 = imposed_var
     active_arcs = [a for a in paired_trips if model.__data1[a].x > 0.99]
-    print(colored("Re-assignment Results:", 'green', attrs=['bold']))
+    print(colored("Optimal solutions:", 'green', attrs=['bold']))
     for i in active_arcs:
         print(
             "Trip {} can be re-assigned".format(i[0]) + ' ' + "before trip {}".format(i[1]))
     for j in toAssign:
         if j not in [a[1] for a in active_arcs]:
             print("No optimal bus trip was found to re-assign before trip {}".format(j))
-    print(colored("Imposed Cancellations", 'green', attrs=['bold']))
+    print(colored("Imposed Cancellations:", 'green', attrs=['bold']))
     imposed_arc = [
         a for a in imposed_cancellation if model.__data2[a].x > 0.99]
     for i in imposed_arc:
@@ -437,12 +437,12 @@ def bus_reassginment(toAssign, reAssign, waitingTime, demand, exceedingCapacity,
     for i in active_arcs:
         if i[0] not in [a[0] for a in imposed_arc]:
             print(
-                "No additional trip(s) is cancelled as a result of cancelling trip {}".format(i[0]) + ' ' + 'being re-assigned before trip {}'.format(i[1]))
+                "No imposed cancellation(s) due to re-assigning trip {}".format(i[0]) + ' ' + 'before trip {}'.format(i[1]))
     return model, active_arcs, imposed_arc
 
 
-mode, active_arcs, imposed_arc = bus_reassginment(toAssign, reAssign, waiting_time_dict, demand_dict,
-                                                  ex_capacity_dict, stops_dict)
+mode, active_arcs, imposed_arc = bus_reassginment(
+    toAssign, reAssign, waiting_time_dict, demand_dict, ex_capacity_dict, stops_dict)
 
 
 # # print optimal solutions
@@ -451,28 +451,30 @@ def con_milsec_datetime(x):
     return date_time
 
 
+epsilon = 120000
 for a in active_arcs:
     print(colored('Description of cancelled trip(s)', 'green', attrs=['bold']))
-    print("Cancelled trip number: {}".format(a[0]))
+    print("Trip number: {}".format(a[0]))
     line_number = trip_line_dict[a[0]]
     dep_time = con_milsec_datetime(dep_time_dict[a[0]])
     deadhead_time = (
         deadhead[(first_stops_dict[a[1]], first_stops_dict[a[0]])])/60000
     reassigned_dep = con_milsec_datetime(
-        dep_time_dict[a[0]] + deadhead[(first_stops_dict[a[1]], first_stops_dict[a[0]])])
+        dep_time_dict[a[0]] + deadhead[(first_stops_dict[a[1]], first_stops_dict[a[0]])] + epsilon)
     next_planned_trip = following_trips_dict[a[0]][0]
     return_to_next_trip = con_milsec_datetime(dep_time_dict[a[0]] + travel_time_dict[a[1]] + deadhead[(
-        first_stops_dict[a[1]], first_stops_dict[a[0]])] + deadhead[(last_stops_dict[a[1]], first_stops_dict[next_planned_trip])])
+        first_stops_dict[a[1]], first_stops_dict[a[0]])] + epsilon + deadhead[(last_stops_dict[a[1]], first_stops_dict[next_planned_trip])])
     next_planned_trip_dep = con_milsec_datetime(
         dep_time_dict[next_planned_trip])
-    print("Planned Line Number: {}".format(line_number))
-    print("Planned Departure time from first stop: {}".format(dep_time))
-    print("Deadhead time of trip {}".format(a[0]) + ' from its first stop' +
-          " to the first stop of trip {}".format(a[0]) + ' ' + "(min): {}".format(deadhead_time))
-    print("Departure time after re-assignment: {}".format(reassigned_dep))
+    print("Bus line number: {}".format(line_number))
+    print("Original departure from the first stop: {}".format(dep_time))
+    print("Bus deadhead time from the first stop of {}".format(a[0]) +
+          " to the first stop of trip {}".format(a[1]) + ' ' + "(min): {}".format(deadhead_time))
+    print("Re-assigned departure from the first stop of trip {}".format(
+        a[1]) + ' : {}'.format(reassigned_dep))
     print("Return to the first stop of next planned trip {}".format(
         next_planned_trip) + ":" + " {}".format(return_to_next_trip))
-    print("Departure time of next planned trip for bus operating {}".format(
+    print("Departure time of next planned trip {}".format(
         a[0]) + "" + ": {}".format(next_planned_trip_dep))
 
 # # list of cancelled trips
