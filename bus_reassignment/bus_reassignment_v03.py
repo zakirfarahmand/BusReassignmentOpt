@@ -1,5 +1,5 @@
 # import libraries
-import data_preprocessing as dp
+from data_preprocessing import preprocesing, select_data
 import googlemaps
 import gurobipy as gp
 from gurobipy import GRB
@@ -22,50 +22,14 @@ from termcolor import colored
 import googlemaps
 gmaps = googlemaps.Client(key='AIzaSyAra0o3L3rs-uHn4EpaXx1Y57SIF_02684')
 
-data = pd.preprocesing()
+# insert year, month, and day
+test_data = select_data(2022, 2, 11)
 
 
-''' Testing the model only for one day '''
+deadhead_data = pd.read_csv(
+    r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/BezettingFare.csv', sep=';')
 
-
-# select the date
-test_date = {'2022-02-11'}
-test_date = pd.DataFrame(test_date, columns=['date'])
-
-
-select_month = 2
-select_day = 11
-data['month'] = pd.to_datetime(data['date']).dt.month
-data['day'] = pd.to_datetime(data['date']).dt.day
-
-# select the test data set
-test_data = data[(data['month'] == select_month) & (data['day'] == select_day)]
-
-# time window
-min_time = {'07:10:00'}
-min_time = pd.DataFrame(min_time, columns=['min_time'])
-test_date['min_time'] = min_time['min_time']
-test_date['min_datetime'] = test_date['date'].map(
-    str) + ' ' + min_time['min_time'].map(str)
-test_date['min_datetime'] = pd.to_datetime(
-    test_date['min_datetime'], infer_datetime_format=True)
-sigma_min = []
-sigma_min = test_date['min_datetime']
-
-# upper bound
-max_time = {'10:00:00'}
-max_time = pd.DataFrame(max_time, columns=['max_time'])
-test_date['max_time'] = max_time['max_time']
-test_date['max_datetime'] = test_date['date'].map(
-    str) + ' ' + max_time['max_time'].map(str)
-sigma_max = []
-sigma_max = test_date['max_datetime']
-
-test_data = test_data[test_data.loc[:, 'dep_datetime'] >= sigma_min[0]]
-test_data = test_data[test_data.loc[:, 'dep_datetime'] <= sigma_max[0]]
-
-# to find the deadhead time between the last stop a trip and first stop of another trip,
-first_stop = test_data.sort_values(by=['PublieksLijnnr', 'dep_datetime']).drop_duplicates(
+first_stop = test_data.sort_values(by=['Systeemlijnnr', 'dep_datetime']).drop_duplicates(
     subset=['Ritnummer'], keep='first')
 first_stop = first_stop.groupby(['IdDimHalte']).nth(0).reset_index()
 first_stop = first_stop[['Ritnummer',
@@ -74,10 +38,10 @@ first_stop = first_stop[['Ritnummer',
 first_lat_lon = {k: (i, j) for k, i, j in zip(
     first_stop['IdDimHalte'], first_stop['Breedtegraad'], first_stop['Lengtegraad'])}
 
-last_stop = test_data.sort_values(by=['PublieksLijnnr', 'passeer_datetime']).drop_duplicates(
+last_stop = test_data.sort_values(by=['Systeemlijnnr', 'passeer_datetime']).drop_duplicates(
     subset=['Ritnummer'], keep='last')
 last_stop = last_stop.groupby(
-    ['PublieksLijnnr', 'Naam_halte']).nth(0).reset_index()
+    ['Systeemlijnnr', 'Naam_halte']).nth(0).reset_index()
 last_stop = last_stop[['Ritnummer',
                        'IdDimHalte', 'Breedtegraad', 'Lengtegraad']]
 last_lat_lon = {k: (i, j) for k, i, j in zip(
@@ -137,16 +101,16 @@ def preprocessing(data):
     first_stop = {}
     last_stop = {}
     preprocessing_data = data.sort_values(
-        by=['PublieksLijnnr', 'dep_datetime']).drop_duplicates(subset=['Ritnummer'], keep='first')
+        by=['Systeemlijnnr', 'dep_datetime']).drop_duplicates(subset=['Ritnummer'], keep='first')
     line_trips = {k: list(v)
-                  for k, v in preprocessing_data.groupby('PublieksLijnnr')['Ritnummer']}
+                  for k, v in preprocessing_data.groupby('Systeemlijnnr')['Ritnummer']}
     trip_line = {k: v for k, v in zip(
-        preprocessing_data['Ritnummer'], preprocessing_data['PublieksLijnnr'])}
+        preprocessing_data['Ritnummer'], preprocessing_data['Systeemlijnnr'])}
     bus_trips = {k: list(v)
                  for k, v in preprocessing_data.groupby('IdDimVoertuig')['Ritnummer']}
     first_stop = {k: v for k, v in zip(
         preprocessing_data['Ritnummer'], preprocessing_data['IdDimHalte'])}
-    last_stop = data.sort_values(by=['PublieksLijnnr', 'dep_datetime']).drop_duplicates(
+    last_stop = data.sort_values(by=['Systeemlijnnr', 'dep_datetime']).drop_duplicates(
         subset=['Ritnummer'], keep='last')
 
     last_stop = {k: v for k, v in zip(
@@ -163,24 +127,24 @@ line_trips_dict, trip_line_dict, bus_trips_dict, first_stops_dict, last_stops_di
 parameters:
 1. headway mean
 2. headway variance '''
-sorted_data = test_data.sort_values(by=['PublieksLijnnr', 'dep_datetime']).drop_duplicates(
+sorted_data = test_data.sort_values(by=['Systeemlijnnr', 'dep_datetime']).drop_duplicates(
     subset=['Ritnummer'], keep='first')
-sorted_data['h_headway'] = sorted_data.groupby(by=['PublieksLijnnr', 'IdDimHalte'])[
+sorted_data['h_headway'] = sorted_data.groupby(by=['Systeemlijnnr', 'IdDimHalte'])[
     'dep_datetime'].transform(pd.Series.diff)
 
 sorted_data['h_headway'] = (sorted_data['h_headway'].dt.total_seconds())/60
 sorted_data = sorted_data.sort_values(
-    by=['PublieksLijnnr', 'IdDimHalte', 'dep_datetime'])
+    by=['Systeemlijnnr', 'IdDimHalte', 'dep_datetime'])
 sorted_data['h_headway'].fillna(method='bfill', inplace=True)
 
 # since variance requires at least two values, remove lines with only on values
-sorted_data.groupby(sorted_data.PublieksLijnnr.tolist(), as_index=False).size()
+sorted_data.groupby(sorted_data.Systeemlijnnr.tolist(), as_index=False).size()
 
 sorted_data['h_var'] = sorted_data.groupby(
-    'PublieksLijnnr')['h_headway'].transform(statistics.variance)
+    'Systeemlijnnr')['h_headway'].transform(statistics.variance)
 
 sorted_data['h_mean'] = sorted_data.groupby(
-    'PublieksLijnnr')['h_headway'].transform(statistics.mean)
+    'Systeemlijnnr')['h_headway'].transform(statistics.mean)
 
 
 def cal_waiting_time(mean, var):
@@ -253,7 +217,7 @@ stops_dict = {k: list(v)
 
 # select enschede data
 enschede_lines = [1, 2, 3, 4, 5, 6, 7, 9]
-enschede_data = test_data[test_data['PublieksLijnnr'].isin(enschede_lines)]
+enschede_data = test_data[test_data['Systeemlijnnr'].isin(enschede_lines)]
 
 
 # False_data = [41296]
@@ -312,7 +276,7 @@ reAssign = [x for x in reAssign if x not in not_reAssign]
 
 # list of the very preceeding trip for each toAssign trip on the same line
 line_trip = test_data.sort_values(
-    by=['PublieksLijnnr', 'dep_datetime']).drop_duplicates(subset=['Ritnummer'], keep='first')
+    by=['Systeemlijnnr', 'dep_datetime']).drop_duplicates(subset=['Ritnummer'], keep='first')
 
 length = len(line_trip)
 preceeding_trip = tuplelist()
