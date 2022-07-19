@@ -1,4 +1,5 @@
 import statistics
+import datetime as dt
 from datetime import datetime
 from random import triangular
 from traceback import format_exception
@@ -11,7 +12,23 @@ import seaborn as sns
 from gurobipy import tuplelist
 import googlemaps
 from soupsieve import select
-gmaps = googlemaps.Client(key='AIzaSyAra0o3L3rs-uHn4EpaXx1Y57SIF_02684')
+import pyodbc
+# gmaps = googlemaps.Client(key='AIzaSyAra0o3L3rs-uHn4EpaXx1Y57SIF_02684')
+
+gmaps = googlemaps.Client(key='AIzaSyAfILHLVkjgwJEpszOgm7l9HDhZOPrcHVU')
+
+
+def connect_to_database():
+    conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
+                          'Server=UT163156;'
+                          'Database=keolis;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    return cursor, conn
+
+
+def conv_time_to_mils(date_time):
+    return date_time.timestamp() * 1000
 
 
 def import_data():
@@ -32,7 +49,6 @@ def import_data():
         data['ArrivalTime'], format='%Y-%m-%d %H:%M:%S')
     data['DepartureTime'] = pd.to_datetime(
         data['DepartureTime'], format='%Y-%m-%d %H:%M:%S')
-
     # fill nan values
     data['OccupancyCorrected'] = data['Occupancy'].fillna(0)
     data.sort_values(by=['TripNumber', 'DepartureTime',
@@ -55,16 +71,56 @@ def select_data(year, month, day):
         data['day'] == day) & (data['year'] == year)]
 
     return data
+
+
 # calculating deadhead time
 
 
 def calculate_distance(lat1, lon1, lat2, lon2):
+
     distance = gmaps.distance_matrix([str(lat1) + " " + str(lon1)],
                                      [str(lat2) + " " + str(lon2)],
                                      departure_time=datetime.now().timestamp(),
                                      mode='driving')['rows'][0]['elements'][0]['duration']['text'].split(' ')[0]
     distance = int(distance) * 60000
     return distance
+
+
+data = select_data(2022, 2, 11)
+
+
+def calculate_deadhead(data):
+    first = data.sort_values(by=['Systeemlijnnr', 'DepartureTime']).drop_duplicates(
+        subset=['TripNumber'], keep='first')
+    last = data.sort_values(by=['Systeemlijnnr', 'DepartureTime']).drop_duplicates(
+        subset=['TripNumber'], keep='last')
+    data = pd.concat([first, last], axis=0)
+    data.drop_duplicates('IdDimHalte', inplace=True)
+    stops_dict = {}
+    stops_dict.update({k: (i, j) for k, i, j in zip(
+        data['IdDimHalte'], data['Breedtegraad'], data['Lengtegraad'])})
+    INF = 99999999
+    Hengelo_stops = [10631, 10635, 10641]
+    deadhead_dict = {}
+    for key1, val1 in stops_dict.items():
+        for key2, val2 in stops_dict.items():
+            if key1 != key2 and key1 not in Hengelo_stops:
+                deadhead_dict.update({(key1, key2):
+                                      calculate_distance(val1[0], val1[1], val2[0], val2[1])})
+            elif key1 == key2 and key1 not in Hengelo_stops:
+                deadhead_dict.update({(key1, key2): 0})
+            elif key1 in Hengelo_stops:
+                deadhead_dict.udpate({(key1, key2): INF})
+    # directly store the data to the databse
+    cursor, conn = connect_to_database()
+    cursor.execute("TRUNCATE TABLE deadhead_time")
+    for key, value in deadhead_dict.items():
+        cursor.execute("INSERT INTO deadhead_time (stopA, stopB, deadhead) values(?,?,?)",
+                       key[0], key[1], value)
+    conn.commit()
+    cursor.close()
+
+    return deadhead_dict
 
 
 def data_preprocessing(data):
@@ -75,56 +131,44 @@ def data_preprocessing(data):
     dep_time_dict = {}
     arr_time_dict = {}
     travel_time_dict = {}
+    data['DepartureTime'] = data['DepartureTime'].apply(
+        conv_time_to_mils)
+
+    # list of all stops with lat and long
     first_stop = data.sort_values(by=['Systeemlijnnr', 'DepartureTime']).drop_duplicates(
         subset=['TripNumber'], keep='first')
+
     line_trips_dict = {k: list(v) for k, v in first_stop.groupby(
         'Systeemlijnnr')['TripNumber']}
+
     bus_trips_dict = {k: list(v)
                       for k, v in first_stop.groupby('IdVehicle')['TripNumber']}
+
     dep_time_dict = {k: v for k, v in zip(
         first_stop['TripNumber'], first_stop['DepartureTime'])}
 
-    first_stop = data.groupby(['IdDimHalte']).nth(0).reset_index()
+    # first_stop = data.groupby(['IdDimHalte']).nth(0).reset_index()
 
     first_stop_dict = {k: v for k, v in zip(
         first_stop.TripNumber, first_stop.IdDimHalte)}
-    first_lat_lon = {k: (i, j) for k, i, j in zip(
-        first_stop['IdDimHalte'], first_stop['Breedtegraad'], first_stop['Lengtegraad'])}
 
     last_stop = data.sort_values(by=['Systeemlijnnr', 'DepartureTime']).drop_duplicates(
         subset=['TripNumber'], keep='last')
+
     arr_time_dict = {k: v for k, v in zip(
         last_stop['TripNumber'], last_stop['DepartureTime'])}
-    last_stop = last_stop.groupby(['IdDimHalte']).nth(0).reset_index()
+
+    # last_stop = last_stop.groupby(['IdDimHalte']).nth(0).reset_index()
     last_stop_dict = {k: v for k, v in zip(
         last_stop.TripNumber, last_stop.IdDimHalte)}
-    last_stop = last_stop[['TripNumber',
-                           'IdDimHalte', 'Breedtegraad', 'Lengtegraad']]
-    last_lat_lon = {k: (i, j) for k, i, j in zip(
-        last_stop['IdDimHalte'], last_stop['Breedtegraad'], last_stop['Lengtegraad'])}
-
-    deadhead = tuplelist()
-    for key1, val1 in last_lat_lon.items():
-        for key2, val2 in first_lat_lon.items():
-            lat1 = val1[0]
-            lon1 = val1[1]
-            lat2 = val2[0]
-            lon2 = val2[1]
-            deadhead += [((key1, key2),
-                          calculate_distance(lat1, lon1, lat2, lon2))]
-    deadhead_dict = dict(deadhead)
 
     for k1, v1 in dep_time_dict.items():
         for k2, v2 in arr_time_dict.items():
             if k1 == k2:
-                travel_time = (v2 - v1).dt.total_seconds() * 1000
+                travel_time = v2 - v1
                 travel_time_dict.update({k1: travel_time})
     # return datasets
-    return deadhead_dict, line_trips_dict, bus_trips_dict, first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict
-
-
-deadhead_dict, line_trips_dict, bus_trips_dict, first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict = data_preprocessing(
-    select_data(2022, 2, 11))
+    return first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict
 
 
 def cal_waiting_time(mean, var):
@@ -202,24 +246,23 @@ def waiting_time(data):
 """
 plot occupancy data
 """
-data = select_data(2022, 2, 11)
-trip_number = 40893
-test_data = data[data['TripNumber'] == trip_number]
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7))
-# fig.tight_layout()
-ax1.plot(test_data.DepartureTime, test_data.OccupancyCorrected, color='green')
-ax1.legend(['Actual departure'], loc=2)
-ax1.set(xlabel='Departure Time', ylabel='Occupancy')
-ax2.plot(test_data.ActualDepartureTime,
-         test_data.OccupancyCorrected, color='blue')
-ax2.legend(['Planned departure'], loc=2)
-ax2.set(xlabel='Departure Time', ylabel='Occupancy')
-fig.suptitle('2022-02-11 \n trip number: {}'.format(trip_number))
-plt.show()
+# data = select_data(2022, 2, 11)
+# trip_number = 40893
+# test_data = data[data['TripNumber'] == trip_number]
+# fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7))
+# # fig.tight_layout()
+# ax1.plot(test_data.DepartureTime, test_data.OccupancyCorrected, color='green')
+# ax1.legend(['Actual departure'], loc=2)
+# ax1.set(xlabel='Departure Time', ylabel='Occupancy')
+# ax2.plot(test_data.ActualDepartureTime,
+#          test_data.OccupancyCorrected, color='blue')
+# ax2.legend(['Planned departure'], loc=2)
+# ax2.set(xlabel='Departure Time', ylabel='Occupancy')
+# fig.suptitle('2022-02-11 \n trip number: {}'.format(trip_number))
+# plt.show()
 
 # %%
 
-
-deadhead_data = pd.read_csv(
-    r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/BezettingFare.csv', sep=';')
-# %%
+# deadhead_data = pd.read_csv(
+#     r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/BezettingFare.csv', sep=';')
+# # %%
