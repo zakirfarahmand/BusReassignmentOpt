@@ -1,8 +1,6 @@
 # import libraries
-from colorama import Cursor
 from soupsieve import select
-import data_preprocessing
-from data_preprocessing import connect_to_database
+import data_preprocessing as dp
 import googlemaps
 import gurobipy as gp
 from gurobipy import GRB
@@ -23,13 +21,23 @@ from matplotlib import animation
 from IPython.display import HTML
 from termcolor import colored
 import googlemaps
+import sys
 gmaps = googlemaps.Client(key='AIzaSyAra0o3L3rs-uHn4EpaXx1Y57SIF_02684')
 
 # AIzaSyBmoRMRmfpYO5AG3GsSbmKlyNPaWOkKROE
 # import functions
 # insert year, month, and day
 
-cursor, conn = connect_to_database()
+
+def deadhead():
+    cursor, conn = dp.connect_to_database()
+    deadhead_time = pd.read_sql_query('select * from deadhead_time', conn)
+    deadhead_dict = {}
+
+    deadhead_dict.update({(i, j): k for i, j, k in zip(
+        deadhead_time.stopA, deadhead_time.stopB, deadhead_time.deadhead)})
+
+    return deadhead_dict
 
 # %%
 
@@ -169,7 +177,7 @@ data = dp.select_data(2022, 2, 12)
 
 def bus_reassginment(data):
     time_window = 60000
-    deadhead_dict = dp.calculate_deadhead(data)
+    deadhead_dict = deadhead()
     demand_dict, stranded_passenger_dict, stops_dict, toAssign, reAssign, trip_following_trips, preceeding_trip = sets_parameters(
         data)
 
@@ -184,7 +192,12 @@ def bus_reassginment(data):
     bigM = 1.64456466e+12  # big value
     deadhead_threshold = 900000  # deadhead time threshold is set 15 minutes
     # create pair of potential trips for re-assignemnt and trips that they could be re-assigned before
-    while True:
+    if len(toAssign) > 0:
+        print('Found overcrowded trips')
+    else:
+        print(colored("Error! No overcrowded trip was found",
+              'green', attrs=['bold']))
+        sys.exit()
 
     paired_trips = tuplelist()
     for i in reAssign:

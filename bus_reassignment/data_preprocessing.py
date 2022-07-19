@@ -31,46 +31,46 @@ def conv_time_to_mils(date_time):
     return date_time.timestamp() * 1000
 
 
-def import_data():
+date = '2022-02-10'
+
+
+def import_data(date):
     # call data from the database
-    data = pd.read_csv(
-        r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/Occupancy2022/Occupancy2022.csv', sep=';')
+    cursor, conn = connect_to_database()
+    data = pd.read_sql_query(
+        "select * from data where OperatingDate = '{}' ".format(date), conn)
+    cursor.close()
 
     lines_connected_2enschede = [4701, 4702, 4703, 4704,
                                  4705, 4706, 4707, 4708, 4709, 4060, 4061, 4062]
     data = data[data['Systeemlijnnr'].isin(
         lines_connected_2enschede)]  # only relevant lines
     # fix data format
-    data['ActualArrivalTime'] = pd.to_datetime(
-        data['ActualArrivalTime'], format='%Y-%m-%d %H:%M:%S')
+    # data['ActualArrivalTime'] = pd.to_datetime(
+    #     data['ActualArrivalTime'], format='%Y-%m-%d %H:%M:%S')
     data['ActualDepartureTime'] = pd.to_datetime(
         data['ActualDepartureTime'], format='%Y-%m-%d %H:%M:%S')
-    data['ArrivalTime'] = pd.to_datetime(
-        data['ArrivalTime'], format='%Y-%m-%d %H:%M:%S')
+    # data['ArrivalTime'] = pd.to_datetime(
+    #     data['ArrivalTime'], format='%Y-%m-%d %H:%M:%S')
     data['DepartureTime'] = pd.to_datetime(
         data['DepartureTime'], format='%Y-%m-%d %H:%M:%S')
     # fill nan values
-    data['OccupancyCorrected'] = data['Occupancy'].fillna(0)
     data.sort_values(by=['TripNumber', 'DepartureTime',
                          'Systeemlijnnr'], inplace=True)
 
-    # for the sake of this project, only a fraction of columns are required
-    column = ['TripNumber', 'Direction', 'Systeemlijnnr', 'IdVehicle', 'OperatingDate',
-              'ActualDepartureTime', 'DepartureTime', 'IdDimHalte', 'Breedtegraad', 'Lengtegraad', 'OccupancyCorrected']
-    data = data[column]
     return data
 
 
-def select_data(year, month, day):
-    data = import_data()
-    data['month'] = pd.to_datetime(data['OperatingDate']).dt.month
-    data['day'] = pd.to_datetime(data['OperatingDate']).dt.day
-    data['year'] = pd.to_datetime(data['OperatingDate']).dt.year
-    # select one day for testing
-    data = data[(data['month'] == month) & (
-        data['day'] == day) & (data['year'] == year)]
+# def select_data(year, month, day):
+#     data = import_data()
+#     data['month'] = pd.to_datetime(data['OperatingDate']).dt.month
+#     data['day'] = pd.to_datetime(data['OperatingDate']).dt.day
+#     data['year'] = pd.to_datetime(data['OperatingDate']).dt.year
+#     # select one day for testing
+#     data = data[(data['month'] == month) & (
+#         data['day'] == day) & (data['year'] == year)]
 
-    return data
+#     return data
 
 
 # calculating deadhead time
@@ -84,9 +84,6 @@ def calculate_distance(lat1, lon1, lat2, lon2):
                                      mode='driving')['rows'][0]['elements'][0]['duration']['text'].split(' ')[0]
     distance = int(distance) * 60000
     return distance
-
-
-data = select_data(2022, 2, 11)
 
 
 def calculate_deadhead(data):

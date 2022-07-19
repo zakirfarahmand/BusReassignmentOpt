@@ -1,5 +1,4 @@
 # import libraries
-from data_preprocessing import preprocesing, select_data
 import googlemaps
 import gurobipy as gp
 from gurobipy import GRB
@@ -23,8 +22,6 @@ import googlemaps
 gmaps = googlemaps.Client(key='AIzaSyAra0o3L3rs-uHn4EpaXx1Y57SIF_02684')
 
 # insert year, month, and day
-test_data = select_data(2022, 2, 11)
-
 
 deadhead_data = pd.read_csv(
     r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/BezettingFare.csv', sep=';')
