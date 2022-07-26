@@ -22,11 +22,15 @@ from IPython.display import HTML
 from termcolor import colored
 import googlemaps
 import sys
+import pytz
 gmaps = googlemaps.Client(key='AIzaSyAra0o3L3rs-uHn4EpaXx1Y57SIF_02684')
 
 # AIzaSyBmoRMRmfpYO5AG3GsSbmKlyNPaWOkKROE
 # import functions
 # insert year, month, and day
+
+date = '2022-02-11'
+data = dp.import_data(date)
 
 
 def deadhead():
@@ -34,6 +38,7 @@ def deadhead():
     deadhead_time = pd.read_sql_query('select * from deadhead_time', conn)
     deadhead_dict = {}
 
+    cursor.close()
     deadhead_dict.update({(i, j): k for i, j, k in zip(
         deadhead_time.stopA, deadhead_time.stopB, deadhead_time.deadhead)})
 
@@ -172,8 +177,6 @@ For creating list B, these preconditions should met:
    2. their following trips should not be overcrowded
 '''
 
-data = dp.select_data(2022, 2, 12)
-
 
 def bus_reassginment(data):
     time_window = 60000
@@ -193,7 +196,7 @@ def bus_reassginment(data):
     deadhead_threshold = 900000  # deadhead time threshold is set 15 minutes
     # create pair of potential trips for re-assignemnt and trips that they could be re-assigned before
     if len(toAssign) > 0:
-        print('Found overcrowded trips')
+        pass
     else:
         print(colored("Error! No overcrowded trip was found",
               'green', attrs=['bold']))
@@ -277,41 +280,149 @@ def bus_reassginment(data):
     return model, active_arcs, imposed_arc
 
 
-model, active_arcs, imposed_arc = bus_reassginment(data)
+model, active_arcs, imposed_arc = bus_reassginment(dp.import_data(date))
 
+
+"""
+plot occupancy data
+"""
 
 # # print optimal solutions
-def con_milsec_datetime(x):
-    date_time = dt.datetime.fromtimestamp(x/1000.0)
-    return date_time
+
+
+def conv_millsecond_localtime(milliseconds):
+    uct_time = dt.datetime.fromtimestamp(milliseconds/1000.0)
+    uct_time = pytz.utc.localize(uct_time)
+    cet = pytz.timezone('CET')
+    offset = uct_time.astimezone(cet).utcoffset()
+    local_time = uct_time - offset
+    return local_time
+
+
+def plot_occupancy(cancelled_trip, reassigned_trip):
+    # data['DepartureTime'] = data['DepartureTime'].apply(
+    #     conv_millsecond_localtime)
+    line_number = data.sort_values(by=['Systeemlijnnr']).drop_duplicates(
+        subset=['TripNumber'], keep='first')
+    line_number = {i: j for i, j in zip(
+        line_number.TripNumber, line_number.Systeemlijnnr)}
+    cancelled = data[data['TripNumber'] == cancelled_trip]
+    reassigned = data[data['TripNumber'] == reassigned_trip]
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+    ax1.plot(cancelled.ActualDepartureTime,
+             cancelled.OccupancyCorrected, color='green')
+    ax1.legend(['Cancelled Trip'], loc=1)
+    ax1.set(xlabel='Departure Time', ylabel='Occupancy')
+    ax1.title.set_text('Line number: {} \n Trip number: {}'.format(
+        line_number[cancelled_trip], cancelled_trip))
+    ax1.tick_params(axis="x", rotation=45)
+
+    ax2.plot(reassigned.ActualDepartureTime,
+             reassigned.OccupancyCorrected, color='blue')
+    ax2.legend(['Overcrowded Trip'], loc=1)
+    ax2.set(xlabel='Departure Time', ylabel='Occupancy')
+    ax2.title.set_text('Line number: {} \n Trip number: {}'.format(
+        line_number[reassigned_trip], reassigned_trip))
+    ax2.tick_params(axis="x", rotation=45)
+    fig.tight_layout()
+    plt.savefig('Occupancy for trip {} assigned to {}.png'.format(
+        cancelled_trip, reassigned_trip), bbox_inches='tight', dpi=300)
+    plt.show()
+
+
+for i, j in active_arcs:
+    plot_occupancy(i, j)
+
+
 # detailes of cancelled and re-assigned trips
+def model_output(active_arcs, imposed_arc, data):
+    if len(active_arcs) > 0:
+        pass
+    else:
+        sys.exit()
+    epsilon = 120000
+    cursor, conn = dp.connect_to_database()
+    bus_stops = pd.read_sql_query('select * from bus_stops', conn)
+    bus_stops = {i: j for i, j in zip(
+        bus_stops['IdDimHalte'], bus_stops['Naam_halte'])}
+    cursor.close()
+
+    deadhead_dict = deadhead()
+    demand_dict, stranded_passenger_dict, stops_dict, toAssign, reAssign, trip_following_trips, preceeding_trip = sets_parameters(
+        data)
+
+    first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict = dp.data_preprocessing(
+        data)
+    # data['DepartureTime'] = data['DepartureTime'].apply(
+    #     conv_millsecond_localtime)
+
+    line_number = data.sort_values(by=['Systeemlijnnr']).drop_duplicates(
+        subset=['TripNumber'], keep='first')
+    line_number = {i: j for i, j in zip(
+        line_number.TripNumber, line_number.Systeemlijnnr)}
+
+    for i, j in active_arcs:
+        cancel_linenr = line_number[i]
+        cancel_departure = conv_millsecond_localtime(dep_time_dict[40869])
+        cancel_first_stop = bus_stops[first_stop_dict[i]]
+        reassign_linenr = line_number[j]
+        toassign_departure = conv_millsecond_localtime(dep_time_dict[j])
+        deadhead_time = (
+            deadhead_dict[(first_stop_dict[i], first_stop_dict[j])])/60000
+        reassigned_departure = conv_millsecond_localtime(
+            dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] + epsilon)
+        reassigned_first_stop = bus_stops[first_stop_dict[j]]
+
+        for p, q, r in imposed_arc:
+            if len(imposed_arc) > 0 and p == i and q == j:
+                next_planned_trip = trip_following_trips[r][0]
+                return_time = conv_millsecond_localtime(dep_time_dict[p] + deadhead_dict[(first_stop_dict[p], first_stop_dict[q])] +
+                                                        epsilon + travel_time_dict[q] + deadhead_dict[(last_stop_dict[q], first_stop_dict[next_planned_trip])])
+                ext_planned_linenr = line_number[next_planned_trip]
+                next_planned_trip_departure = conv_millsecond_localtime(
+                    dep_time_dict[next_planned_trip])
+                next_trip_first_stop = bus_stops[first_stop_dict[r]]
+            else:
+                sys.exit()
+        next_planned_trip = trip_following_trips[i][0]
+        return_time = conv_millsecond_localtime(dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] +
+                                                epsilon + travel_time_dict[j] + deadhead_dict[(last_stop_dict[j], first_stop_dict[next_planned_trip])])
+        next_planned_trip_departure = conv_millsecond_localtime(
+            dep_time_dict[next_planned_trip])
+        next_planned_linenr = line_number[next_planned_trip]
+        next_trip_first_stop = bus_stops[first_stop_dict[next_planned_trip]]
+
+        print(colored('Optimal solution:', 'green', attrs=['bold']))
+        print("Cancelled trip {}".format(i) + ' ' +
+              'from line {}'.format(cancel_linenr))
+        print("Assign before/after trip {}".format(j) +
+              ' ' + 'on line {}'.format(reassign_linenr))
+        print(colored('Cancellation details:', 'green', attrs=['bold']))
+        print("Planned departure from: {}".format(
+            cancel_first_stop) + ': {}'.format(cancel_departure))
+        print("Deadhead time from: {}".format(cancel_first_stop) +
+              " to: {}".format(reassigned_first_stop) + ": {}".format(deadhead_time) + ' minutes')
+        print('Boarding time: 2 minutes')
+        print("Re-assigned departure from {}".format(reassigned_first_stop) +
+              ': {}'.format(reassigned_departure))
+        print("Return to the next planned trip {}".format(
+            next_planned_trip) + " " + "on line {}".format(next_planned_linenr) + ': {}'.format(return_time))
+        print("Planned departure of {}".format(next_planned_trip) + ' ' +
+              'from {}'.format(next_trip_first_stop) + ': {}'.format(next_planned_trip_departure))
+
+        cursor, conn = dp.connect_to_database()
+        model_output = pd.read_sql_query('select * from model_output', conn)
+        if i not in list(model_output['cancelledTrip']):
+            cursor.execute("INSERT INTO model_output (cancelledTrip, lineNumber, plannedDeparture, plannedStop, reassignTo, reassignDeparture, reassignStop, deadheadTime, boardingtime, reassignedDeparture, returnTime, nextTrip, nextLineNumber, nextDeparture, nextStop) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           i, cancel_linenr, cancel_departure, cancel_first_stop, j, toassign_departure, reassigned_first_stop, deadhead_time, epsilon/60000, reassigned_departure, return_time, next_planned_trip, next_planned_linenr, next_planned_trip_departure, next_trip_first_stop)
+
+            conn.commit()
+        # cursor.execute("SELECT * FROM model_output GROUP BY cancelledTrip HAVING COUNT(cancelledTrip) > 1")
+        cursor.close()
 
 
-epsilon = 120000
-for a in active_arcs:
-    print(colored('Description of cancelled trip(s)', 'green', attrs=['bold']))
-    print("Trip number: {}".format(a[0]))
-    line_number = trip_line_dict[a[0]]
-    dep_time = con_milsec_datetime(dep_time_dict[a[0]])
-    deadhead_time = (
-        deadhead[(first_stops_dict[a[1]], first_stops_dict[a[0]])])/60000
-    reassigned_dep = con_milsec_datetime(
-        dep_time_dict[a[0]] + deadhead[(first_stops_dict[a[1]], first_stops_dict[a[0]])] + epsilon)
-    next_planned_trip = following_trips_dict[a[0]][0]
-    return_to_next_trip = con_milsec_datetime(dep_time_dict[a[0]] + travel_time_dict[a[1]] + deadhead[(
-        first_stops_dict[a[1]], first_stops_dict[a[0]])] + epsilon + deadhead[(last_stops_dict[a[1]], first_stops_dict[next_planned_trip])])
-    next_planned_trip_dep = con_milsec_datetime(
-        dep_time_dict[next_planned_trip])
-    print("Bus line number: {}".format(line_number))
-    print("Original departure from the first stop: {}".format(dep_time))
-    print("Bus deadhead time from the first stop of {}".format(a[0]) +
-          " to the first stop of trip {}".format(a[1]) + ' ' + "(min): {}".format(deadhead_time))
-    print("Re-assigned departure from the first stop of trip {}".format(
-        a[1]) + ' : {}'.format(reassigned_dep))
-    print("Return to the first stop of next planned trip {}".format(
-        next_planned_trip) + ":" + " {}".format(return_to_next_trip))
-    print("Departure time of next planned trip {}".format(
-        a[0]) + "" + ": {}".format(next_planned_trip_dep))
+model_output(active_arcs, imposed_arc, data)
+
 
 # # list of cancelled trips
 # cancelled = [a[0] for a in active_arcs]

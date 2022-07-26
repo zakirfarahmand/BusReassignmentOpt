@@ -31,9 +31,6 @@ def conv_time_to_mils(date_time):
     return date_time.timestamp() * 1000
 
 
-date = '2022-02-10'
-
-
 def import_data(date):
     # call data from the database
     cursor, conn = connect_to_database()
@@ -239,26 +236,28 @@ def waiting_time(data):
     return waiting_time_dict
 
 
-# %%
-"""
-plot occupancy data
-"""
-# data = select_data(2022, 2, 11)
+# # %%
+# """
+# plot occupancy data
+# """
+# date = '2022-02-11'
+# data = import_data(date)
 # trip_number = 40893
 # test_data = data[data['TripNumber'] == trip_number]
 # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7))
-# # fig.tight_layout()
 # ax1.plot(test_data.DepartureTime, test_data.OccupancyCorrected, color='green')
 # ax1.legend(['Actual departure'], loc=2)
 # ax1.set(xlabel='Departure Time', ylabel='Occupancy')
+# ax1.title.set_text('2022-02-11 \n trip number: {}'.format(trip_number))
 # ax2.plot(test_data.ActualDepartureTime,
 #          test_data.OccupancyCorrected, color='blue')
 # ax2.legend(['Planned departure'], loc=2)
 # ax2.set(xlabel='Departure Time', ylabel='Occupancy')
-# fig.suptitle('2022-02-11 \n trip number: {}'.format(trip_number))
+# ax2.title.set_text('2022-02-11 \n trip number: {}'.format(trip_number))
+# fig.tight_layout()
 # plt.show()
 
-# %%
+# # %%
 
 # deadhead_data = pd.read_csv(
 #     r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/BezettingFare.csv', sep=';')
