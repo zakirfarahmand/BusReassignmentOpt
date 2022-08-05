@@ -109,6 +109,9 @@ def export_cancellation(data_name):
 export_cancellation(data_name='bus_cancellation')
 
 
+data_name = 'boarding_alighting_2022'
+
+
 def export_boarding(data_name):
     data = pd.read_csv(
         r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
@@ -149,6 +152,7 @@ def export_boarding(data_name):
     column = ['DateTime', 'Systeemlijnnr',
               'Direction', 'IdDimHalte', 'BoardersCorrected']
     data = data[column]
+
     cursor, conn = dp.connect_to_database()
     data = np.array(data)
     for i in range(len(data)):
@@ -292,14 +296,16 @@ def export_weather(data_name):
 export_weather(data_name='weather_2011_2020')
 
 
-# test = data_group[data_group['Systeemlijnnr'] == 4701]
+# test = data[data['Systeemlijnnr'] == 4709]
+
+
 # test1 = test[test['Direction'] == 1]
 # test2 = test[test['Direction'] == 2]
 
 # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7))
-# ax1.plot(test1.OperatingDate, test1.BoardersCorrected, color='green')
+# ax1.plot(test1.DateTime, test1.BoardersCorrected, color='green')
 # ax1.legend(['direction 1'], loc=2)
-# ax2.plot(test2.OperatingDate,
+# ax2.plot(test2.DateTime,
 #          test2.BoardersCorrected, color='blue')
 # # ax2.legend(['Planned departure'], loc=2)
 # # ax2.set(xlabel='Departure Time', ylabel='Occupancy')
