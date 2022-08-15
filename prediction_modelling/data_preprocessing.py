@@ -20,7 +20,7 @@ gmaps = googlemaps.Client(key='AIzaSyAfILHLVkjgwJEpszOgm7l9HDhZOPrcHVU')
 
 def connect_to_database():
     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
-                          'Server=UT163156;'
+                          'Server=ZAKIR;'
                           'Database=keolis;'
                           'Trusted_Connection=yes;')
     cursor = conn.cursor()
