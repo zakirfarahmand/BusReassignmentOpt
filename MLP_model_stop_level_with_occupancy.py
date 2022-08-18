@@ -3,7 +3,6 @@
 from copyreg import pickle
 import tensorflow as tf
 from keras.wrappers.scikit_learn import KerasRegressor
-import data_preprocessing as dp
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -26,13 +25,21 @@ from tensorflow.keras.optimizers import Nadam
 
 # %%
 
+def connect_to_database():
+    conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
+                          'Server=ZAKIR;'
+                          'Database=keolis;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    return cursor, conn
+
 
 def input_data(line_number, direction, stop):
-    cursor, conn = dp.connect_to_database()
+    cursor, conn = connect_to_database()
     # import boarding data
-    boarding_data = pd.read_sql_query(
-        'select * from boarding_data where system_linenr = {} and direction = {} and stop = {}'.format(line_number, direction, stop), conn)
-
+    occupancy_data = pd.read_sql_query(
+        'select * from occupancy_per_stop where system_linenr = {} and direction = {} and stop = {}'.format(line_number, direction, stop), conn)
+    occupancy_data['hour'] = pd.to_datetime(occupancy_data['date_time']).dt.hour
     # import weather data
     weather_data = pd.read_sql_query('select * from weather_data', conn)
 
@@ -50,11 +57,11 @@ def input_data(line_number, direction, stop):
 
     # import bus cancelation
     bus_cancellations = pd.read_sql_query(
-        'select * from bus_cancellations where system_linenr = {} and direction = {}'.format(line_number, direction), conn)
-
+        'select * from bus_cancellations where system_linenr = {} and direction = {}'.format(line_number, direction, stop), conn)
+    bus_cancellations.drop(['system_linenr', 'direction'],axis =1,  inplace=True)
     # combine datasets
     data = pd.DataFrame(
-        pd.merge(boarding_data, weather_data, on=['date_time', 'date_time']))
+        pd.merge(occupancy_data, weather_data, on=['date_time', 'date_time']))
     data['Date'] = data['date_time'].dt.date
     data = pd.merge(data, school_holidays, on='Date',  how='left')
     data['school_holiday'] = data['school_holiday'].fillna(0)
@@ -67,7 +74,7 @@ def input_data(line_number, direction, stop):
     data = data[data['date_time'].dt.hour >= 6]
     data = data[data['date_time'].dt.hour < 23]
     data['hour'] = data['date_time'].dt.hour
-    column = ['date_time', 'stop', 'boarders',
+    column = ['date_time', 'system_linenr', 'direction', 'stop', 'occupancy',
               'temp', 'sun_duration', 'prec_duration', 'prec_amount', 'cloud_cover',
               'humidity', 'rain', 'snow', 'windx', 'windy', 'school_holiday', 'public_holiday', 'num_cancellations', 'hour']
     data = data[column]
@@ -75,29 +82,15 @@ def input_data(line_number, direction, stop):
     cursor.close()
 
     return data
-
-
+data = input_data(4709, 1, 9920)
+#%%
 # def model_inputs(data):
-
-
-def create_model(activation='relu'):
-    model = Sequential()
-    model.add(Dense(256, input_dim=19,
-              kernel_initializer='normal', activation=activation))
-    model.add(Dense(128, kernel_initializer='normal', activation=activation))
-    model.add(Dense(64, kernel_initializer='normal', activation=activation))
-    model.add(Dense(1))
-   # Compile model
-    optimizer = Nadam(learning_rate=0.01)
-    model.compile(loss='mse', optimizer=optimizer)
-    return model
-
 
 def MLP_model_weekdays(line, direction, stop):
     data = input_data(line, direction, stop)
     data = data[data['date_time'].dt.year == 2022]
     data = data.sort_values('date_time')
-
+    data.drop(['system_linenr', 'direction', 'stop'], axis=1, inplace=True)
     data['Date'] = data['date_time'].dt.date
 
     data['day'] = data['date_time'].dt.day_name()
@@ -114,11 +107,11 @@ def MLP_model_weekdays(line, direction, stop):
         lambda x: 1 if x == 'Thursday' else 0)
     weekdays['friday'] = weekdays['day'].apply(
         lambda x: 1 if x == 'Friday' else 0)
-    weekdays.drop(['day', 'Date', 'stop'], axis=1, inplace=True)
+    weekdays.drop(['day', 'Date'], axis=1, inplace=True)
 
     dataset = weekdays.set_index('date_time')
-    X = np.array(dataset.drop('boarders', axis=1))
-    y = np.array(dataset['boarders'])
+    X = np.array(dataset.drop('occupancy', axis=1))
+    y = np.array(dataset['occupancy'])
 
     # Scalling data from 0 to 1
     X_scaler = StandardScaler()
@@ -140,38 +133,38 @@ def MLP_model_weekdays(line, direction, stop):
     X_test = data_set_test[:, 1:]
     y_test = data_set_test[:, 0]
 
-    def create_model(activation='relu'):
-        model = Sequential()
-        model.add(Dense(256, input_dim=19,
-              kernel_initializer='normal', activation=activation))
-        model.add(Dense(128, kernel_initializer='normal', activation=activation))
-        model.add(Dense(64, kernel_initializer='normal', activation=activation))
-        model.add(Dense(1))
-        # Compile model
-        optimizer = Nadam(learning_rate=0.01)
-        model.compile(loss='mse', optimizer=optimizer)
-        return model
-    model = KerasRegressor(build_fn=create_model,
-                           batch_size=32, epochs=50, verbose=0)
+    MLP_model = MLPRegressor(max_iter=10000, random_state=0)
+    check_parameters = {
+        'hidden_layer_sizes': [(128, 64, 32, 16), (64, 32, 16, 8), (100,)],
+        'activation': ['tanh', 'relu'],
+        'solver': ['sgd', 'adam'],
+        'alpha': [0.1, 0.01, 0.001],
+        'learning_rate': ['constant', 'adaptive']
+    }
+    gridsearchcv = GridSearchCV(
+        estimator=MLP_model, param_grid=check_parameters, n_jobs=-1, cv=3)
+    
+    gridsearchcv.fit(X_train, y_train)
+    
+    # save the model 
+    name = 'MLP_{}_{}_{}.pkl'.format(line, direction, stop)
+    joblib.dump(grid.best_estimator_, name, compress = 1)
+    
+    print('Best parameters found:\n', gridsearchcv.best_params_)
 
-    activation = ['softmax', 'softplus', 'softsign', 'relu', 'tanh', 'sigmoid']
-    param_grid = dict(activation=activation)
-    grid = GridSearchCV(estimator=model, param_grid=param_grid,
-                        n_jobs=-1, cv=3)
-    grid_result = grid.fit(X_train, y_train)
-    # summarize results
-    print("Best: %f using %s" %
-          (grid_result.best_score_, grid_result.best_params_))
-    means = grid_result.cv_results_['mean_test_score']
-    stds = grid_result.cv_results_['std_test_score']
-    params = grid_result.cv_results_['params']
-    for mean, stdev, param in zip(means, stds, params):
-        print("%f (%f) with: %r" % (mean, stdev, param))
+    y_true, y_pred = y_test, gridsearchcv.predict(X_test)
 
+    y_pred = y_scaler.inverse_transform(y_pred.reshape(-1, 1))
+    y_true = y_scaler.inverse_transform(y_true.reshape(-1, 1))
+
+    mae_weekdays = mean_absolute_error(y_true, y_pred)
+
+    
     y_true, y_pred = y_test, grid.predict(X_test)
 
-    # y_pred = y_scaler.inverse_transform(y_pred.reshape(-1, 1))
-    # y_true = y_scaler.inverse_transform(y_true.reshape(-1, 1))
+    y_pred = y_scaler.inverse_transform(y_pred.reshape(-1, 1))
+    y_true = y_scaler.inverse_transform(y_true.reshape(-1, 1))
+    
 
     return y_pred, y_true
 
@@ -198,6 +191,7 @@ plt.legend(fontsize=10, loc=1)
 plt.show()
 
 
+#%%
 dataset = weekdays.set_index('date_time')
 date = pd.DataFrame(weekdays['date_time'])
 

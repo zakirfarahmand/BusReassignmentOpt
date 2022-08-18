@@ -1,8 +1,16 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-import data_preprocessing as dp
 import datetime as dt
+import pyodbc 
+
+def connect_to_database():
+    conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
+                          'Server=ZAKIR;'
+                          'Database=keolis;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    return cursor, conn
 
 
 def export_occupancy_per_trip(data_name):
@@ -17,7 +25,7 @@ def export_occupancy_per_trip(data_name):
     data['IdVehicle'] = data['IdVehicle'].astype('int')
     data['IdDimHalte'] = data['IdDimHalte'].astype('int')
     data['OccupancyCorrected'] = data['OccupancyCorrected'].astype('int')
-    cursor, conn = dp.connect_to_database()
+    cursor, conn = connect_to_database()
     column = ['TripNumber', 'Direction', 'Systeemlijnnr', 'IdVehicle', 'OperatingDate',
               'ActualDepartureTime', 'DepartureTime', 'IdDimHalte', 'Breedtegraad', 'Lengtegraad', 'OccupancyCorrected']
     data = data[column]
@@ -96,7 +104,7 @@ def export_cancellation(data_name):
     data = pd.DataFrame(data.groupby(['DateTime', 'Systeemlijnnr', 'Richting'])[
         'Concession'].count().reset_index())
 
-    cursor, conn = dp.connect_to_database()
+    cursor, conn = connect_to_database()
     data = np.array(data)
     for i in range(len(data)):
         cursor.execute("INSERT INTO bus_cancellations (date_time, system_linenr, direction, num_cancellations) values(?,?,?,?)",
@@ -109,7 +117,7 @@ def export_cancellation(data_name):
 export_cancellation(data_name='bus_cancellation')
 
 
-data_name = 'boarding_alighting_2022'
+
 
 
 def export_boarding(data_name):
@@ -153,7 +161,7 @@ def export_boarding(data_name):
               'Direction', 'IdDimHalte', 'BoardersCorrected']
     data = data[column]
 
-    cursor, conn = dp.connect_to_database()
+    cursor, conn = connect_to_database()
     data = np.array(data)
     for i in range(len(data)):
         cursor.execute("INSERT INTO boarding_data (date_time, system_linenr, direction, stop, boarders) values(?,?,?,?,?)",
@@ -167,8 +175,10 @@ export_boarding(data_name='boarding_alighting_2021')
 
 
 def export_occupancy_per_stop(data_name):
+    # data = pd.read_csv(
+    #     r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
     data = pd.read_csv(
-        r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
+        r'C:/Users/zfara/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
     data = data.fillna(0)
     data['hour'] = pd.to_datetime(data['ActualDepartureTime']).dt.hour
 
@@ -206,10 +216,10 @@ def export_occupancy_per_stop(data_name):
     column = ['DateTime', 'Systeemlijnnr',
               'Direction', 'IdDimHalte', 'OccupancyCorrected']
     data = data[column]
-    cursor, conn = dp.connect_to_database()
+    cursor, conn = connect_to_database()
     data = np.array(data)
     for i in range(len(data)):
-        cursor.execute("INSERT INTO occupancy_data (date_time, system_linenr, direction, stop, occupancy) values(?,?,?,?,?)",
+        cursor.execute("INSERT INTO occupancy_per_stop (date_time, system_linenr, direction, stop, occupancy) values(?,?,?,?,?)",
                        data[i, 0], data[i, 1], data[i, 2], data[i, 3], data[i, 4])
 
     conn.commit()
@@ -283,7 +293,7 @@ def export_weather(data_name):
     column = ['DateTime', 'temp', 'sun_duration', 'prec_duration', 'prec_amount',
               'cloud_cover', 'humidity', 'rain', 'snow', 'windx', 'windy']
     data = data[column]
-    cursor, conn = dp.connect_to_database()
+    cursor, conn = connect_to_database()
     data = np.array(data)
     for i in range(len(data)):
         cursor.execute("INSERT INTO weather_data (date_time, temp, sun_duration, prec_duration, prec_amount, cloud_cover, humidity, rain, snow, windx, windy) values(?,?,?,?,?,?,?,?,?,?,?)",
