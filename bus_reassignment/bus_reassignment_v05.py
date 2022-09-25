@@ -1,6 +1,5 @@
 # import libraries
 from soupsieve import select
-import data_preprocessing as dp
 import googlemaps
 import gurobipy as gp
 from gurobipy import GRB
@@ -28,6 +27,7 @@ import pytz
 # import functions
 # insert year, month, and day
 
+
 def connect_to_database():
     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
                           'Server=ZAKIR;'
@@ -37,33 +37,148 @@ def connect_to_database():
     return cursor, conn
 
 
-date = '2022-02-11'
+def connect_to_databaseapi():
+    conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
+                          'Server=ZAKIR;'
+                          'Database=keodss3.0;'
+                          'Trusted_Connection=yes;')
+    cursor = conn.cursor()
+    return cursor, conn
 
-def import_data(opDate):
-    # call data from the database
+date = dt.datetime.today().date()
+
+
+
+    # list of trips exceeding the capacity threshold
+   
+    
+def preliminary_parameters(date):
     cursor, conn = connect_to_database()
-    data = pd.read_sql_query(
-        "select * from  where OperatingDate = '{}' ".format(opDate), conn)
+    data = pd.read_sql(
+        "SELECT * FROM pred_occupancy_per_stop WHERE operating_date = '{}'".format(date), conn)
     cursor.close()
+    data = data.replace({np.nan: None})
 
-    lines_connected_2enschede = [4701, 4702, 4703, 4704,
-                                 4705, 4706, 4707, 4708, 4709, 4060, 4061, 4062]
-    data = data[data['Systeemlijnnr'].isin(
-        lines_connected_2enschede)]  # only relevant lines
-    # fix data format
-    # data['ActualArrivalTime'] = pd.to_datetime(
-    #     data['ActualArrivalTime'], format='%Y-%m-%d %H:%M:%S')
-    data['ActualDepartureTime'] = pd.to_datetime(
-        data['ActualDepartureTime'], format='%Y-%m-%d %H:%M:%S')
-    # data['ArrivalTime'] = pd.to_datetime(
-    #     data['ArrivalTime'], format='%Y-%m-%d %H:%M:%S')
-    data['DepartureTime'] = pd.to_datetime(
-        data['DepartureTime'], format='%Y-%m-%d %H:%M:%S')
-    # fill nan values
-    data.sort_values(by=['TripNumber', 'DepartureTime',
-                         'Systeemlijnnr'], inplace=True)
+    for i in range(len(data)):
+        if data.loc[i, 'passing_time'] is not None:
+            data.loc[i, 'passing_time'] = data.loc[i, 'passing_time']
+        else:
+            data.loc[i, 'passing_time'] = data.loc[i, 'arrival_time']
+    first_stop_dict = {}
+    last_stop_dict = {}
+    bus_trips_dict = {}
+    line_trips_dict = {}
+    dep_time_dict = {}
+    arr_time_dict = {}
+    travel_time_dict = {}
 
-    return data
+    # create dictionary for the first stop of each trip
+    first_stop = data.sort_values(by=['trip_number', 'passing_time']).drop_duplicates(
+        subset=['trip_number'], keep='first')
+
+    first_stop_dict.update({k: v for k, v in zip(
+        first_stop['trip_number'], first_stop['stop'])})
+    # create dictionary for the last stop of each trip
+    last_stop = data.sort_values(by=['trip_number', 'passing_time']).drop_duplicates(
+        subset=['trip_number'], keep='last')
+
+    last_stop_dict.update({k: v for k, v in zip(
+        last_stop['trip_number'], last_stop['stop'])})
+    # create departure and arrival times dictionary
+    dep_time_dict.update({i: j for i, j in zip(
+        first_stop['trip_number'], first_stop['departure_time'])})
+    arr_time_dict.update({i: j for i, j in zip(
+        last_stop['trip_number'], last_stop['arrival_time'])})
+    # calculate travel time for each trip
+    for k1, v1 in dep_time_dict.items():
+        for k2, v2 in arr_time_dict.items():
+            if k1 == k2:
+                travel_time = v2 - v1
+                travel_time_dict.update({k1: travel_time})
+    # list of trips on the same line
+    line_trips_dict.update({k: list(v) for k, v in data.groupby(
+        'system_linenr')['trip_number']})
+    # list of trips operating by the same bus
+    bus_trips_dict.update({k: list(v)
+                           for k, v in data.groupby('vehicle_number')['trip_number']})
+
+    # return datasets
+    return first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict
+
+
+def calculate_waiting_time(date):
+
+    waiting_time_dict = {}
+
+    cursor, conn = connect_to_database()
+    data = pd.read_sql(
+        "SELECT * FROM pred_occupancy_per_stop WHERE operating_date = '{}'".format(date), conn)
+    cursor.close()
+    data = data.replace({np.nan: None})
+
+    for i in range(len(data)):
+        if data.loc[i, 'passing_time'] is not None:
+            data.loc[i, 'hour'] = int(data.loc[i, 'passing_time']/3600)
+        else:
+            data.loc[i, 'hour'] = int(data.loc[i, 'arrival_time']/3600)
+
+    for i in range(len(data)):
+        if data.loc[i, 'passing_time'] is not None:
+            data.loc[i, 'passing_time'] = data.loc[i, 'passing_time']
+        else:
+            data.loc[i, 'passing_time'] = data.loc[i, 'arrival_time']
+
+    data = data.sort_values(
+        by=['system_linenr', 'direction', 'passing_time'])
+
+    # calculate headway for different time of the day: peak and off-peak
+    data['headway'] = data.groupby(by=['system_linenr', 'direction', 'stop'])[
+        'passing_time'].transform(pd.Series.diff)
+    data = data.sort_values(
+        by=['system_linenr', 'direction', 'stop', 'passing_time'])
+    data['headway'].fillna(method='bfill', inplace=True)
+
+    data['variance'] = data.groupby(by=['system_linenr', 'direction', 'stop'])[
+        'headway'].transform(statistics.variance)
+    data['mean'] = data.groupby(by=['system_linenr', 'direction', 'stop'])[
+        'headway'].transform(statistics.mean)
+
+    def cal_waiting_time(mean, var):
+        waiting_time = mean * 0.5 + 0.5 * (var / mean)
+        return waiting_time
+    # calculate waiting time
+    data['waiting_time'] = cal_waiting_time(
+        data['mean'], data['variance'])
+
+    waiting_time_dict.update({(i, j): k for i, j, k in zip(
+        data['trip_number'], data['stop'], data['waiting_time'])})
+
+    return waiting_time_dict
+
+
+# def pred_occupancy_data(date):
+#     # call data from the database
+#     cursor, conn = connect_to_database()
+#     data = pd.read_sql_query(
+#         "select * from pred_occupancy_per_stop where operating_date = '{}' ".format(date), conn)
+#     cursor.close()
+
+
+#     # fix data format
+#     # data['ActualArrivalTime'] = pd.to_datetime(
+#     #     data['ActualArrivalTime'], format='%Y-%m-%d %H:%M:%S')
+#     data['ActualDepartureTime'] = pd.to_datetime(
+#         data['ActualDepartureTime'], format='%Y-%m-%d %H:%M:%S')
+#     # data['ArrivalTime'] = pd.to_datetime(
+#     #     data['ArrivalTime'], format='%Y-%m-%d %H:%M:%S')
+#     data['DepartureTime'] = pd.to_datetime(
+#         data['DepartureTime'], format='%Y-%m-%d %H:%M:%S')
+#     # fill nan values
+#     data.sort_values(by=['TripNumber', 'DepartureTime',
+#                          'Systeemlijnnr'], inplace=True)
+
+#     return data
+
 
 def deadhead():
     cursor, conn = connect_to_database()
@@ -75,74 +190,75 @@ def deadhead():
         deadhead_time.stopA, deadhead_time.stopB, deadhead_time.deadhead)})
 
     return deadhead_dict
-# %%
-def conv_time_to_mils(date_time):
-    return date_time.timestamp() * 1000
+
 
 # %%
+
 
 ''' list of to assign and re-assign should only from Enschede bus lines '''
 
 
-def sets_parameters(opDate):
-    data = import_data(opDate)
-    capacity_threshold = 50
-    demand_dict = {}  # number of expected boarding passengers at every stop
-    # number of passengers who cannot board buses due to overcrowding
-    stranded_passenger_dict = {}
+def optimization_parameters(date):
+    cursor, conn = connect_to_database()
+    data = pd.read_sql_query(
+        "select * from pred_occupancy_per_stop where operating_date = '{}' ".format(date), conn)
+    cursor.close()
+    first_trips = data.sort_values(by=['system_linenr', 'direction', 'departure_time']).drop_duplicates(
+        subset=['system_linenr', 'direction', 'trip_number'], keep='first')
+    first_trips = first_trips.drop_duplicates(
+        subset=['system_linenr', 'direction'], keep='first')
+    first_trips = [i for i in first_trips['trip_number']]
+    last_trips = data.sort_values(by=['system_linenr', 'direction', 'departure_time']).drop_duplicates(
+        subset=['system_linenr', 'direction', 'trip_number'], keep='last')
+    last_trips = last_trips.drop_duplicates(
+        subset=['system_linenr', 'direction'], keep='last')
+    last_trips = [i for i in last_trips['trip_number']]
+    data = data[~data['trip_number'].isin(first_trips)]
+    data = data[~data['trip_number'].isin(last_trips)]
+    data.dropna(inplace=True)
+    # remove the first and last trip of the day
+    capacity_threshold = 50  # capacity threshold
+    occupancy_dict = {}  # number of expected in-vehicle passengers
+    stranded_pass_dict = {}  # number of passengers exceeding the capacity threshold
     stops_dict = {}  # list of all stops along each trip
-    trip_following_trips = {}
+    trip_following_trips = {}  # list of following trips
     bus_trips = {}  # list trips operated by the same bus
     line_trips = {}  # list of trips on the same bus line
-    # convert timestamp into milliseconds
-    # data['DepartureTime'] = data['DepartureTime'].apply(
-    #     conv_time_to_mils)
-
-    # remove the first and last trip of the day
-    first_trip = data.sort_values(by=['system_linenr', 'dep_time']).drop_duplicates(
-        subset=['trip_number'], keep='first')
-    first_trip = first_trip.loc[first_trip.groupby(
-        by=['system_linenr', 'direction']).dep_time.idxmin()]
-    first_trip = first_trip['trip_number'].tolist()
-    last_trip = data.sort_values(by=['system_linenr', 'dep_time']).drop_duplicates(
-        subset=['trip_number'], keep='last')
-    last_trip = last_trip.loc[last_trip.groupby(
-        by=['system_linenr', 'direction']).dep_time.idxmax()]
-    last_trip = last_trip['trip_number'].tolist()
-    data = data[~data['trip_number'].isin(first_trip)]
-    data = data[~data['trip_number'].isin(last_trip)]
-
+    toAssign = []
+    reAssign = []
     # calculate occupancy exceeding the capacity threshold
-    data['exceeding_capacity'] = data['occupancy'].apply(
+    data['stranded_passengers'] = data['prediction_per_stop'].apply(
         lambda x: x - capacity_threshold if (x > capacity_threshold) else 0)
 
-    demand_dict = {(i, j): k for i, j, k in zip(
-        data['trip_number'], data['stop'], data['occupancy'])}
+    occupancy_dict.update({(i, j): k for i, j, k in zip(
+        data['trip_number'], data['stop'], data['prediction_per_stop'])})
 
-    stranded_passenger_dict = data.sort_values(by=['trip_number', 'stop']).set_index(
-        ['trip_number', 'stop']).to_dict()['exceeding_capacity']
+    stranded_pass_dict.update({(i, j): k for i, j, k in zip(
+        data['trip_number'], data['stop'], data['stranded_passengers'])})
 
     stops_dict = {k: list(v)
                   for k, v in data.groupby('trip_number')['stop']}
 
     enschede_lines = [4701, 4702, 4703, 4704, 4705, 4706, 4707, 4709]
+
     enschede = data[data['system_linenr'].isin(enschede_lines)]
     # list of trips exceeding the capacity threshold
-    trips_ex_capacity = [
-        k for k in enschede[enschede['exceeding_capacity'] > 0]['trip_number']]
-    toAssign = enschede[enschede['trip_number'].isin(trips_ex_capacity)]
-    toAssign = toAssign['trip_number'].drop_duplicates(keep='first').tolist()
+    toAssign += [
+        k for k in enschede[enschede['stranded_passengers'] > 0]['trip_number'].drop_duplicates(keep='first')]
 
     # list of trips that could potentially be re-assigned
-    reAssign = enschede[~enschede['trip_number'].isin(trips_ex_capacity)]
+    reAssign = enschede[~enschede['trip_number'].isin(toAssign)]
+    line9 = [4709]    # any trips on line 9 cannot be reassigned
+    reAssign = reAssign[~reAssign['system_linenr'].isin(line9)]
     reAssign = reAssign['trip_number'].drop_duplicates(keep='first').tolist()
 
     # list of three following trips for each trip operated by the same bus
+
     sorted_data = data.sort_values(
-        by=['IdVehicle', 'dep_time']).drop_duplicates(subset=['trip_number'], keep='first')
+        by=['vehicle_number', 'departure_time']).drop_duplicates(subset=['trip_number'], keep='first')
 
     bus_trips.update({k: list(v)
-                      for k, v in sorted_data.groupby('IdVehicle')['trip_number']})
+                      for k, v in sorted_data.groupby('vehicle_number')['trip_number']})
 
     all_following_trips = {}
     for trip in reAssign:
@@ -151,10 +267,10 @@ def sets_parameters(opDate):
             if trip in value:
                 all_following_trips.update({trip: value})
 
-    dep_time = data.sort_values(by=['system_linenr', 'dep_time']).drop_duplicates(
+    dep_time = data.sort_values(by=['system_linenr', 'departure_time']).drop_duplicates(
         subset=['trip_number'], keep='first')
     dep_time_dict = {k: v for k, v in zip(
-        dep_time['trip_number'], dep_time['dep_time'])}
+        dep_time['trip_number'], dep_time['departure_time'])}
 
     for key, value in all_following_trips.items():
         following_trips_list = []
@@ -178,7 +294,7 @@ def sets_parameters(opDate):
 
     # list of preceeding trips on the same bus line
     sorted_data2 = data.sort_values(
-        by=['system_linenr', 'dep_time']).drop_duplicates(subset=['trip_number'], keep='first')
+        by=['system_linenr', 'departure_time']).drop_duplicates(subset=['trip_number'], keep='first')
 
     line_trips.update({k: list(v)
                        for k, v in sorted_data2.groupby(['system_linenr', 'direction'])['trip_number']})
@@ -196,8 +312,9 @@ def sets_parameters(opDate):
                 preceeding_list += [i]
                 preceeding_list.reverse()
         preceeding_trip.update({key: preceeding_list[0]})
+    reAssign = [a for a in reAssign if a not in preceeding_trip.values()]
 
-    return demand_dict, stranded_passenger_dict, stops_dict, toAssign, reAssign, trip_following_trips, preceeding_trip
+    return occupancy_dict, stranded_pass_dict, stops_dict, toAssign, reAssign, trip_following_trips, preceeding_trip
 
 
 '''
@@ -207,22 +324,23 @@ For creating list B, these preconditions should met:
 '''
 
 
-def bus_reassginment(opDate):
-    time_window = 60000
+def bus_reassginment(date):
+    time_window = 600
+
     deadhead_dict = deadhead()
-    demand_dict, stranded_passenger_dict, stops_dict, toAssign, reAssign, trip_following_trips, preceeding_trip = sets_parameters(
-        opDate)
+    occupancy_dict, stranded_pass_dict, stops_dict, toAssign, reAssign, trip_following_trips, preceeding_trip = optimization_parameters(
+        date)
 
-    waiting_time_dict = dp.waiting_time(data)
+    waiting_time_dict = calculate_waiting_time(date)
 
-    first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict = dp.data_preprocessing(
-        data)
+    first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict = preliminary_parameters(
+        date)
 
     model = gp.Model('Bus Reassignment')
-    epsilon = 120000  # this is the time for boarding passengers
+    epsilon = 120  # this is the time for boarding passengers
 
     bigM = 1.64456466e+12  # big value
-    deadhead_threshold = 900000  # deadhead time threshold is set 15 minutes
+    deadhead_threshold = 900  # deadhead time threshold is set 15 minutes
     # create pair of potential trips for re-assignemnt and trips that they could be re-assigned before
     if len(toAssign) > 0:
         pass
@@ -234,7 +352,7 @@ def bus_reassginment(opDate):
     paired_trips = tuplelist()
     for i in reAssign:
         for j in toAssign:
-            if dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] <= dep_time_dict[j] + time_window:
+            if (dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] <= dep_time_dict[j] + time_window) & (dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] >= dep_time_dict[j] - time_window):
                 paired_trips += [(i, j)]
     # x = model.addVars(trip_pairs, vtype=GRB.BINARY, name='x')
     reassign_var = model.addVars(
@@ -249,8 +367,8 @@ def bus_reassginment(opDate):
         imposed_cancellation, vtype=GRB.BINARY, name="x[%s, %s, %s]" % (i, j, k))
     model.update()
     # objective
-    obj = quicksum(0.5 * reassign_var[i, j] * stranded_passenger_dict[j, s] * waiting_time_dict[j] for i, j in paired_trips for s in stops_dict[j]) + quicksum(3 * (1-reassign_var[i, j]) * stranded_passenger_dict[j, s] * waiting_time_dict[j] for i, j in paired_trips for s in stops_dict[j]) + quicksum(2 * reassign_var[i, j] *
-                                                                                                                                                                                                                                                                                                             demand_dict[i, s] * waiting_time_dict[i] for i, j in paired_trips for s in stops_dict[i]) + quicksum(2 * imposed_var[i, j, k] * demand_dict[k, s] * waiting_time_dict[k] for i, j in paired_trips for k in trip_following_trips[i] for s in stops_dict[k])  # + quicksum(0.001 * imposed_var[i,j,k] for i, j, k in imposed_cancellation)
+    obj = quicksum(0.5 * reassign_var[i, j] * stranded_pass_dict[j, s] * waiting_time_dict[j, s] for i, j in paired_trips for s in stops_dict[j]) + quicksum(3 * (1-reassign_var[i, j]) * stranded_pass_dict[j, s] * waiting_time_dict[j, s] for i, j in paired_trips for s in stops_dict[j]) + quicksum(2 * reassign_var[i, j] * occupancy_dict[i, s]
+                                                                                                                                                                                                                                                                                                         * waiting_time_dict[i, s] for i, j in paired_trips for s in stops_dict[i]) + quicksum(2 * imposed_var[i, j, k] * occupancy_dict[k, s] * waiting_time_dict[k, s] for i, j in paired_trips for k in trip_following_trips[i] for s in stops_dict[k])  # + quicksum(0.001 * imposed_var[i,j,k] for i, j, k in imposed_cancellation)
     model.setObjective(obj, GRB.MINIMIZE)
     model.update()
     # add constraints
@@ -264,10 +382,10 @@ def bus_reassginment(opDate):
     model.addConstrs((reassign_var[i, j] * deadhead_dict[(first_stop_dict[i], first_stop_dict[j])]
                      <= deadhead_threshold for i, j in paired_trips), name='deadhead[%s, %s]' % (i, j))
     # lastest departure time of re-assigned trips
-    model.addConstrs((reassign_var[i, j] * (dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])])
-                     <= dep_time_dict[j] + time_window for i, j in paired_trips), name='departureTimeUp[%s, %s]' % (i, j))
     # model.addConstrs((reassign_var[i, j] * (dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])])
-    #                  >= dep_time_dict[j] - time_window for i, j in paired_trips), name='departureTimeUp[%s, %s]' % (i, j))
+    #                  <= dep_time_dict[j] + time_window for i, j in paired_trips), name='departureTimeUp[%s, %s]' % (i, j))
+    # model.addConstrs((- reassign_var[i, j] * (dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])])
+    #                  <= time_window - dep_time_dict[j] for i, j in paired_trips), name='departureTimeUp[%s, %s]' % (i, j))
     # earliest departure time of re-assigned trips: before departure of the very first preceeding trip
     model.addConstrs((reassign_var[i, j] * (dep_time_dict[preceeding_trip[j]]) <= dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])]
                       for i, j in paired_trips), name='departureTimeUp[%s, %s]' % (i, j))
@@ -289,6 +407,7 @@ def bus_reassginment(opDate):
     model.__data1 = reassign_var
     model.__data2 = imposed_var
     active_arcs = [a for a in paired_trips if model.__data1[a].x > 0.99]
+
     print(colored("Optimal solutions:", 'green', attrs=['bold']))
     for i in active_arcs:
         print(
@@ -309,7 +428,7 @@ def bus_reassginment(opDate):
     return model, active_arcs, imposed_arc
 
 
-model, active_arcs, imposed_arc = bus_reassginment(dp.import_data(date))
+model, active_arcs, imposed_arc = bus_reassginment('2022-09-20')
 
 
 """

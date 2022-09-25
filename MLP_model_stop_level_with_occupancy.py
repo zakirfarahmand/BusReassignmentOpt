@@ -110,7 +110,7 @@ def MLP_model_weekdays(line, direction, stop):
     weekdays.drop(['day', 'Date'], axis=1, inplace=True)
 
     dataset = weekdays.set_index('date_time')
-    X = np.array(dataset.drop('occupancy', axis=1))
+    X = np.array(dataset.drop(['occupancy', 'rain'], axis=1))
     y = np.array(dataset['occupancy'])
 
     # Scalling data from 0 to 1
@@ -148,7 +148,8 @@ def MLP_model_weekdays(line, direction, stop):
     
     # save the model 
     name = 'MLP_{}_{}_{}.pkl'.format(line, direction, stop)
-    joblib.dump(grid.best_estimator_, name, compress = 1)
+    
+    joblib.dump(gridsearchcv, name, compress = 1)
     
     print('Best parameters found:\n', gridsearchcv.best_params_)
 
@@ -160,13 +161,92 @@ def MLP_model_weekdays(line, direction, stop):
     mae_weekdays = mean_absolute_error(y_true, y_pred)
 
     
-    y_true, y_pred = y_test, grid.predict(X_test)
+    y_true, y_pred = y_test, gridsearchcv.predict(X_test)
 
     y_pred = y_scaler.inverse_transform(y_pred.reshape(-1, 1))
     y_true = y_scaler.inverse_transform(y_true.reshape(-1, 1))
     
+    
+    predictions = np.column_stack([y_true, y_pred])
+    predictions = pd.DataFrame(predictions, columns=[
+                           'actual_values', 'predicted_values'])
+    predictions['predicted_values'] = round(predictions['predicted_values'])
 
-    return y_pred, y_true
+    plt.rcParams['figure.figsize'] = (12, 7)
+    plt.title('Predictions vs actual values on line: {} direction: {} stop: {}'.format(line, direction, stop), fontsize=12)
+    plt.plot(predictions.actual_values, linewidth=1.5,
+         marker='o', markersize=4, linestyle="--", label='Actual values')
+    plt.plot(predictions.predicted_values, linewidth=1.5,
+         marker='o', markersize=4, linestyle="-", label='Predicted Values')
+    # plt.yticks(np.arange(0, 4500, step=1000))
+    plt.ylabel('Passengers / hour', fontsize=11)
+    plt.xlabel('Time [hour]', fontsize=11)
+    plt.legend(fontsize=10, loc=1)
+    plt.show()
+
+MLP_model_weekdays(4709, 1, 9920)
+
+#%%
+# run the model of all stops of a line
+list_lines = 
+
+
+#%%
+"""
+Models for pickling
+"""
+def MLP_weekdays(line, direction, stop):
+    data = input_data(line, direction, stop)
+    data = data[data['date_time'].dt.year == 2022]
+    data = data.sort_values('date_time')
+    data.drop(['system_linenr', 'direction', 'stop'], axis=1, inplace=True)
+    data['Date'] = data['date_time'].dt.date
+
+    data['day'] = data['date_time'].dt.day_name()
+    weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    # weekdays data
+    weekdays = pd.DataFrame(data.loc[(data.day.isin(weekdays)), :])
+    weekdays['monday'] = weekdays['day'].apply(
+        lambda x: 1 if x == 'Monday' else 0)
+    weekdays['tuesday'] = weekdays['day'].apply(
+        lambda x: 1 if x == 'Tuesday' else 0)
+    weekdays['wednesday'] = weekdays['day'].apply(
+        lambda x: 1 if x == 'Wednesday' else 0)
+    weekdays['thursday'] = weekdays['day'].apply(
+        lambda x: 1 if x == 'Thursday' else 0)
+    weekdays['friday'] = weekdays['day'].apply(
+        lambda x: 1 if x == 'Friday' else 0)
+    weekdays.drop(['day', 'Date'], axis=1, inplace=True)
+
+    dataset = weekdays.set_index('date_time')
+    X = np.array(dataset.drop(['occupancy', 'rain', 'snow'], axis=1))
+    y = np.array(dataset['occupancy'])
+
+    # Scalling data from 0 to 1
+    X_scaler = StandardScaler()
+    y_scaler = StandardScaler()
+    X_scaled = (X_scaler.fit_transform(X))
+    y_scaled = (y_scaler.fit_transform(y.reshape(-1, 1)))
+
+    MLP_model = MLPRegressor(max_iter=10000, random_state=0)
+    check_parameters = {
+        'hidden_layer_sizes': [(128, 64, 32, 16), (64, 32, 16, 8), (100,)],
+        'activation': ['tanh', 'relu'],
+        'solver': ['sgd', 'adam'],
+        'alpha': [0.1, 0.01, 0.001],
+        'learning_rate': ['constant', 'adaptive']
+    }
+    gridsearchcv = GridSearchCV(
+        estimator=MLP_model, param_grid=check_parameters, n_jobs=-1, cv=3)
+    
+    gridsearchcv.fit(X_scaled, y_scaled)
+    
+    # save the model 
+    name = 'MLP_{}_{}_{}.pkl'.format(line, direction, stop)
+    
+    joblib.dump(gridsearchcv, name, compress = 1)
+    
+    print('Best parameters found:\n', gridsearchcv.best_params_)
 
 
 y_pred, y_true = MLP_model_weekdays(4709, 1, 9920)
@@ -183,13 +263,15 @@ plt.plot(predictions.actual_values, linewidth=1.5,
 plt.plot(predictions.predicted_values, linewidth=1.5,
          marker='o', markersize=4, linestyle="-", label='Predicted Values')
 
-
 # plt.yticks(np.arange(0, 4500, step=1000))
 plt.ylabel('Passengers / hour', fontsize=11)
 plt.xlabel('Time [hour]', fontsize=11)
 plt.legend(fontsize=10, loc=1)
 plt.show()
 
+
+
+#%%
 
 #%%
 dataset = weekdays.set_index('date_time')
@@ -244,8 +326,10 @@ grid = GridSearchCV(estimator=model, param_grid=param_grid,
 grid.fit(X_train, y_train)
 
 
-filename = 'test.sav'
-joblib.dump(grid, filename)
+filename = 'test.pkl'
+joblib.dump(grid.best_estimator_, filename, compress = 1)
+
+
 # summarize results
 print("Best: %f using %s" % (grid.best_score_, grid.best_params_))
 means = grid.cv_results_['mean_test_score']
@@ -293,11 +377,12 @@ plt.show()
 a = predictions['predicted_values'].sum()
 b = predictions['actual_values'].sum()
 
+#%%
 dataset = weekdays.set_index('date_time')
 date = pd.DataFrame(weekdays['date_time'])
 
-X = np.array(dataset.drop('boarders', axis=1))
-y = np.array(dataset['boarders'])
+X = np.array(dataset.drop('occupancy', axis=1))
+y = np.array(dataset['occupancy'])
 
 
 # Scalling data from 0 to 1
@@ -338,6 +423,9 @@ gridsearchcv = GridSearchCV(
     estimator=MLP_model_default, param_grid=check_parameters, n_jobs=-1, cv=3)
 gridsearchcv.fit(X_train, y_train)
 
+
+filename = 'test_{}_{}_{}.pkl'.format(1245,1,9920)
+joblib.dump(gridsearchcv, filename, compress = 1)
 
 print('Best parameters found:\n', gridsearchcv.best_params_)
 
