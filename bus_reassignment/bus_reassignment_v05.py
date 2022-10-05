@@ -1,4 +1,5 @@
 # import libraries
+from typing import final
 from soupsieve import select
 import googlemaps
 import gurobipy as gp
@@ -30,7 +31,7 @@ import pytz
 
 def connect_to_database():
     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
-                          'Server=ZAKIR;'
+                          'Server=UT163156;'
                           'Database=keolis;'
                           'Trusted_Connection=yes;')
     cursor = conn.cursor()
@@ -39,31 +40,60 @@ def connect_to_database():
 
 def connect_to_databaseapi():
     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
-                          'Server=ZAKIR;'
+                          'Server=UT163156;'
                           'Database=keodss3.0;'
                           'Trusted_Connection=yes;')
     cursor = conn.cursor()
     return cursor, conn
 
-date = dt.datetime.today().date()
+
+# list of trips exceeding the capacity threshold
 
 
-
-    # list of trips exceeding the capacity threshold
-   
-    
 def preliminary_parameters(date):
+    date = str(date)
     cursor, conn = connect_to_database()
     data = pd.read_sql(
         "SELECT * FROM pred_occupancy_per_stop WHERE operating_date = '{}'".format(date), conn)
+    timetable = pd.read_sql(
+        "SELECT * FROM timetable WHERE operating_date = '{}'".format(date), conn)
     cursor.close()
     data = data.replace({np.nan: None})
 
+    data = pd.merge(timetable, data, how='left', on=[
+                    'trip_number', "system_linenr", 'direction', 'stop'])
+    column = ['operating_date_x', 'system_linenr', 'direction', 'trip_number', 'stop',
+              'passing_time_x', 'arrival_time_x', 'departure_time_x',
+              'vehicle_number_x', 'prediction_per_hour',
+              'occupancy_ratio', 'prediction_per_stop', 'prev_week_occupancy']
+    data = data[column]
+
     for i in range(len(data)):
-        if data.loc[i, 'passing_time'] is not None:
-            data.loc[i, 'passing_time'] = data.loc[i, 'passing_time']
+        if data.loc[i, 'passing_time_x'] is not None:
+            data.loc[i, 'passing_time_x'] = data.loc[i, 'passing_time_x']
         else:
-            data.loc[i, 'passing_time'] = data.loc[i, 'arrival_time']
+            data.loc[i, 'passing_time_x'] = data.loc[i, 'arrival_time_x']
+    for i in range(len(data)):
+        if data.loc[i, 'arrival_time_x'] is not None:
+            data.loc[i, 'arrival_time_x'] = data.loc[i, 'arrival_time_x']
+        else:
+            data.loc[i, 'arrival_time_x'] = data.loc[i, 'passing_time_x']
+    data.fillna(0, inplace=True)
+
+    for i in range(len(data)):
+        dep_time = data.loc[i, 'departure_time_x']
+        data.loc[i, 'departure_time_x'] = dt.timedelta(
+            hours=dep_time.hour, minutes=dep_time.minute, seconds=dep_time.second).total_seconds()
+
+    for i in range(len(data)):
+        pass_time = data.loc[i, 'passing_time_x']
+        data.loc[i, 'passing_time_x'] = dt.timedelta(
+            hours=pass_time.hour, minutes=pass_time.minute, seconds=pass_time.second).total_seconds()
+    for i in range(len(data)):
+        arr_time = data.loc[i, 'arrival_time_x']
+        data.loc[i, 'arrival_time_x'] = dt.timedelta(
+            hours=arr_time.hour, minutes=arr_time.minute, seconds=arr_time.second).total_seconds()
+
     first_stop_dict = {}
     last_stop_dict = {}
     bus_trips_dict = {}
@@ -73,22 +103,22 @@ def preliminary_parameters(date):
     travel_time_dict = {}
 
     # create dictionary for the first stop of each trip
-    first_stop = data.sort_values(by=['trip_number', 'passing_time']).drop_duplicates(
+    first_stop = data.sort_values(by=['trip_number', 'passing_time_x']).drop_duplicates(
         subset=['trip_number'], keep='first')
 
     first_stop_dict.update({k: v for k, v in zip(
         first_stop['trip_number'], first_stop['stop'])})
     # create dictionary for the last stop of each trip
-    last_stop = data.sort_values(by=['trip_number', 'passing_time']).drop_duplicates(
+    last_stop = data.sort_values(by=['trip_number', 'passing_time_x']).drop_duplicates(
         subset=['trip_number'], keep='last')
 
     last_stop_dict.update({k: v for k, v in zip(
         last_stop['trip_number'], last_stop['stop'])})
     # create departure and arrival times dictionary
     dep_time_dict.update({i: j for i, j in zip(
-        first_stop['trip_number'], first_stop['departure_time'])})
+        first_stop['trip_number'], first_stop['departure_time_x'])})
     arr_time_dict.update({i: j for i, j in zip(
-        last_stop['trip_number'], last_stop['arrival_time'])})
+        last_stop['trip_number'], last_stop['arrival_time_x'])})
     # calculate travel time for each trip
     for k1, v1 in dep_time_dict.items():
         for k2, v2 in arr_time_dict.items():
@@ -100,7 +130,7 @@ def preliminary_parameters(date):
         'system_linenr')['trip_number']})
     # list of trips operating by the same bus
     bus_trips_dict.update({k: list(v)
-                           for k, v in data.groupby('vehicle_number')['trip_number']})
+                           for k, v in data.groupby('vehicle_number_x')['trip_number']})
 
     # return datasets
     return first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict
@@ -109,24 +139,34 @@ def preliminary_parameters(date):
 def calculate_waiting_time(date):
 
     waiting_time_dict = {}
-
+    date = str(date)
     cursor, conn = connect_to_database()
     data = pd.read_sql(
-        "SELECT * FROM pred_occupancy_per_stop WHERE operating_date = '{}'".format(date), conn)
+        "SELECT * FROM timetable WHERE operating_date = '{}'".format(date), conn)
     cursor.close()
     data = data.replace({np.nan: None})
 
-    for i in range(len(data)):
-        if data.loc[i, 'passing_time'] is not None:
-            data.loc[i, 'hour'] = int(data.loc[i, 'passing_time']/3600)
-        else:
-            data.loc[i, 'hour'] = int(data.loc[i, 'arrival_time']/3600)
+    # for i in range(len(data)):
+    #     if data.loc[i, 'passing_time'] is not None:
+    #         data.loc[i, 'hour'] = int(data.loc[i, 'passing_time']/3600)
+    #     else:
+    #         data.loc[i, 'hour'] = int(data.loc[i, 'arrival_time']/3600)
 
     for i in range(len(data)):
         if data.loc[i, 'passing_time'] is not None:
             data.loc[i, 'passing_time'] = data.loc[i, 'passing_time']
         else:
             data.loc[i, 'passing_time'] = data.loc[i, 'arrival_time']
+
+    for i in range(len(data)):
+        dep_time = data.loc[i, 'departure_time']
+        data.loc[i, 'departure_time'] = dt.timedelta(
+            hours=dep_time.hour, minutes=dep_time.minute, seconds=dep_time.second).total_seconds()
+
+    for i in range(len(data)):
+        pass_time = data.loc[i, 'passing_time']
+        data.loc[i, 'passing_time'] = dt.timedelta(
+            hours=pass_time.hour, minutes=pass_time.minute, seconds=pass_time.second).total_seconds()
 
     data = data.sort_values(
         by=['system_linenr', 'direction', 'passing_time'])
@@ -199,16 +239,51 @@ def deadhead():
 
 
 def optimization_parameters(date):
+    date = str(date)
     cursor, conn = connect_to_database()
-    data = pd.read_sql_query(
-        "select * from pred_occupancy_per_stop where operating_date = '{}' ".format(date), conn)
+    data = pd.read_sql(
+        "SELECT * FROM pred_occupancy_per_stop WHERE operating_date = '{}'".format(date), conn)
+    timetable = pd.read_sql(
+        "SELECT * FROM timetable WHERE operating_date = '{}'".format(date), conn)
     cursor.close()
-    first_trips = data.sort_values(by=['system_linenr', 'direction', 'departure_time']).drop_duplicates(
+    data = data.replace({np.nan: None})
+
+    data = pd.merge(timetable, data, how='left', on=[
+                    'trip_number', "system_linenr", 'direction', 'stop'])
+    column = ['operating_date_x', 'system_linenr', 'direction', 'trip_number', 'stop',
+              'passing_time_x', 'arrival_time_x', 'departure_time_x',
+              'vehicle_number_x', 'prediction_per_hour',
+              'occupancy_ratio', 'prediction_per_stop', 'prev_week_occupancy']
+    data = data[column]
+
+    for i in range(len(data)):
+        if data.loc[i, 'passing_time_x'] is not None:
+            data.loc[i, 'passing_time_x'] = data.loc[i, 'passing_time_x']
+        else:
+            data.loc[i, 'passing_time_x'] = data.loc[i, 'arrival_time_x']
+    for i in range(len(data)):
+        if data.loc[i, 'arrival_time_x'] is not None:
+            data.loc[i, 'arrival_time_x'] = data.loc[i, 'arrival_time_x']
+        else:
+            data.loc[i, 'arrival_time_x'] = data.loc[i, 'passing_time_x']
+    data.fillna(0, inplace=True)
+
+    for i in range(len(data)):
+        dep_time = data.loc[i, 'departure_time_x']
+        data.loc[i, 'departure_time_x'] = dt.timedelta(
+            hours=dep_time.hour, minutes=dep_time.minute, seconds=dep_time.second).total_seconds()
+
+    for i in range(len(data)):
+        pass_time = data.loc[i, 'passing_time_x']
+        data.loc[i, 'passing_time_x'] = dt.timedelta(
+            hours=pass_time.hour, minutes=pass_time.minute, seconds=pass_time.second).total_seconds()
+
+    first_trips = data.sort_values(by=['system_linenr', 'direction', 'departure_time_x']).drop_duplicates(
         subset=['system_linenr', 'direction', 'trip_number'], keep='first')
     first_trips = first_trips.drop_duplicates(
         subset=['system_linenr', 'direction'], keep='first')
     first_trips = [i for i in first_trips['trip_number']]
-    last_trips = data.sort_values(by=['system_linenr', 'direction', 'departure_time']).drop_duplicates(
+    last_trips = data.sort_values(by=['system_linenr', 'direction', 'departure_time_x']).drop_duplicates(
         subset=['system_linenr', 'direction', 'trip_number'], keep='last')
     last_trips = last_trips.drop_duplicates(
         subset=['system_linenr', 'direction'], keep='last')
@@ -217,7 +292,7 @@ def optimization_parameters(date):
     data = data[~data['trip_number'].isin(last_trips)]
     data.dropna(inplace=True)
     # remove the first and last trip of the day
-    capacity_threshold = 50  # capacity threshold
+    capacity_threshold = 60  # capacity threshold
     occupancy_dict = {}  # number of expected in-vehicle passengers
     stranded_pass_dict = {}  # number of passengers exceeding the capacity threshold
     stops_dict = {}  # list of all stops along each trip
@@ -255,10 +330,10 @@ def optimization_parameters(date):
     # list of three following trips for each trip operated by the same bus
 
     sorted_data = data.sort_values(
-        by=['vehicle_number', 'departure_time']).drop_duplicates(subset=['trip_number'], keep='first')
+        by=['vehicle_number_x', 'departure_time_x']).drop_duplicates(subset=['trip_number'], keep='first')
 
     bus_trips.update({k: list(v)
-                      for k, v in sorted_data.groupby('vehicle_number')['trip_number']})
+                      for k, v in sorted_data.groupby('vehicle_number_x')['trip_number']})
 
     all_following_trips = {}
     for trip in reAssign:
@@ -267,10 +342,10 @@ def optimization_parameters(date):
             if trip in value:
                 all_following_trips.update({trip: value})
 
-    dep_time = data.sort_values(by=['system_linenr', 'departure_time']).drop_duplicates(
+    dep_time = data.sort_values(by=['system_linenr', 'departure_time_x']).drop_duplicates(
         subset=['trip_number'], keep='first')
     dep_time_dict = {k: v for k, v in zip(
-        dep_time['trip_number'], dep_time['departure_time'])}
+        dep_time['trip_number'], dep_time['departure_time_x'])}
 
     for key, value in all_following_trips.items():
         following_trips_list = []
@@ -294,7 +369,7 @@ def optimization_parameters(date):
 
     # list of preceeding trips on the same bus line
     sorted_data2 = data.sort_values(
-        by=['system_linenr', 'departure_time']).drop_duplicates(subset=['trip_number'], keep='first')
+        by=['system_linenr', 'departure_time_x']).drop_duplicates(subset=['trip_number'], keep='first')
 
     line_trips.update({k: list(v)
                        for k, v in sorted_data2.groupby(['system_linenr', 'direction'])['trip_number']})
@@ -373,7 +448,7 @@ def bus_reassginment(date):
     model.update()
     # add constraints
     # assign only one trip
-    model.addConstrs((reassign_var.sum('*', j) <=
+    model.addConstrs((reassign_var.sum('*', j) ==
                      1 for j in toAssign), name="toAssign[%s]" % j)
     # cancell a trip only once
     model.addConstrs((reassign_var.sum(i, '*') <=
@@ -397,10 +472,9 @@ def bus_reassginment(date):
             model.addConstr((reassign_var[i, j] * (dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] + travel_time_dict[j] + deadhead_dict[(
                 last_stop_dict[j], first_stop_dict[p])])) - bigM * imposed_var[i, j, p] <= dep_time_dict[p])
 
-    for i, j in paired_trips:
         # max number of imposed cancellation
-        model.addConstrs((imposed_var.sum(i, '*', k) <=
-                         2 for k in trip_following_trips[i]))
+    model.addConstrs((imposed_var.sum(i, j, '*'))
+                     <= 1 for i, j in paired_trips)
     model.update()
 
     model.optimize()
@@ -425,151 +499,314 @@ def bus_reassginment(date):
         if i[0] not in [a[0] for a in imposed_arc]:
             print(
                 "No imposed cancellation(s) due to re-assigning trip {}".format(i[0]) + ' ' + 'before trip {}'.format(i[1]))
-    return model, active_arcs, imposed_arc
+    return active_arcs, imposed_arc, toAssign, first_stop_dict, dep_time_dict, trip_following_trips, deadhead_dict
 
 
-model, active_arcs, imposed_arc = bus_reassginment('2022-09-20')
+# active_arcs, imposed_arc = bus_reassginment('2022-09-26')
 
 
-"""
-plot occupancy data
-"""
-
-# # print optimal solutions
+date = dt.datetime.today().date() - timedelta(days=6)
 
 
-def conv_millsecond_localtime(milliseconds):
-    uct_time = dt.datetime.fromtimestamp(milliseconds/1000.0)
-    uct_time = pytz.utc.localize(uct_time)
-    cet = pytz.timezone('CET')
-    offset = uct_time.astimezone(cet).utcoffset()
-    local_time = uct_time - offset
-    return local_time
+def export_optimization_results(date):
+    active_arcs, imposed_arc, toAssign, first_stop_dict, dep_time_dict, trip_following_trips, deadhead_dict = bus_reassginment(
+        date)
 
+    date = str(date)
+    cursor, conn = connect_to_database()
+    data = pd.read_sql(
+        "SELECT * FROM pred_occupancy_per_stop WHERE operating_date = '{}'".format(date), conn)
+    timetable = pd.read_sql(
+        "SELECT * FROM timetable WHERE operating_date = '{}'".format(date), conn)
+    cursor.close()
+    stops = pd.read_csv(
+        r'C:/Users/FARAHMANDZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/bus_stops.csv', sep=';')
+    data = pd.merge(data, stops, left_on=['stop'], right_on=['IdDimHalte'])
 
-def plot_occupancy(cancelled_trip, reassigned_trip):
-    # data['DepartureTime'] = data['DepartureTime'].apply(
-    #     conv_millsecond_localtime)
-    line_number = data.sort_values(by=['Systeemlijnnr']).drop_duplicates(
-        subset=['TripNumber'], keep='first')
-    line_number = {i: j for i, j in zip(
-        line_number.TripNumber, line_number.Systeemlijnnr)}
-    cancelled = data[data['TripNumber'] == cancelled_trip]
-    reassigned = data[data['TripNumber'] == reassigned_trip]
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-    ax1.plot(cancelled.ActualDepartureTime,
-             cancelled.occupancy, color='green')
-    ax1.legend(['Cancelled Trip'], loc=1)
-    ax1.set(xlabel='Departure Time', ylabel='Occupancy')
-    ax1.title.set_text('Line number: {} \n Trip number: {}'.format(
-        line_number[cancelled_trip], cancelled_trip))
-    ax1.tick_params(axis="x", rotation=45)
+    data = data.replace({np.nan: None})
 
-    ax2.plot(reassigned.ActualDepartureTime,
-             reassigned.occupancy, color='blue')
-    ax2.legend(['Overcrowded Trip'], loc=1)
-    ax2.set(xlabel='Departure Time', ylabel='Occupancy')
-    ax2.title.set_text('Line number: {} \n Trip number: {}'.format(
-        line_number[reassigned_trip], reassigned_trip))
-    ax2.tick_params(axis="x", rotation=45)
-    fig.tight_layout()
-    plt.savefig('Occupancy for trip {} assigned to {}.png'.format(
-        cancelled_trip, reassigned_trip), bbox_inches='tight', dpi=300)
-    plt.show()
+    data = pd.merge(timetable, data, how='left', on=[
+                    'trip_number', "system_linenr", 'direction', 'stop'])
 
+    column = ['operating_date_x', 'system_linenr', 'direction', 'trip_number', 'stop',
+              'passing_time_x', 'arrival_time_x', 'departure_time_x',
+              'vehicle_number_x', 'prediction_per_hour',
+              'occupancy_ratio', 'prediction_per_stop', 'prev_week_occupancy']
+    data = data[column]
 
-for i, j in active_arcs:
-    plot_occupancy(i, j)
+    data = pd.merge(data, stops, left_on=['stop'], right_on=['IdDimHalte'])
 
+    for i in range(len(data)):
+        if data.loc[i, 'passing_time_x'] is not None:
+            data.loc[i, 'passing_time_x'] = data.loc[i, 'passing_time_x']
+        else:
+            data.loc[i, 'passing_time_x'] = data.loc[i, 'arrival_time_x']
+    for i in range(len(data)):
+        if data.loc[i, 'arrival_time_x'] is not None:
+            data.loc[i, 'arrival_time_x'] = data.loc[i, 'arrival_time_x']
+        else:
+            data.loc[i, 'arrival_time_x'] = data.loc[i, 'passing_time_x']
+    data.fillna(0, inplace=True)
+    trips = data.sort_values(by=['trip_number', 'passing_time_x']).drop_duplicates(
+        subset=['trip_number'], keep='first')
+    trip_line_direction = {k: (v, j) for k, v, j in zip(
+        trips['trip_number'], trips['system_linenr'], trips['direction'])}
+    trip_vehicle = {k: v for k, v in zip(
+        trips['trip_number'], trips['vehicle_number_x'])}
+    # list of overcrowded trips under the pilot
+    df1 = data[data['trip_number'].isin(toAssign)]
+    most_crowded_stop = {}
+    for trip in toAssign:
+        most_crowded_stop.update(
+            {trip: df1[df1['trip_number'] == trip]['prediction_per_stop'].max()})
+    df1 = df1.sort_values(by=['passing_time_x']).drop_duplicates(
+        'trip_number', keep='first')
+    df1.reset_index(inplace=True)
+    df1['most_crowded_stop'] = ''
+    for i in range(len(df1)):
+        for key in most_crowded_stop.keys():
+            if df1.loc[i, 'trip_number'] == key:
+                df1.loc[i, 'most_crowded_stop'] = most_crowded_stop[key]
+    df1 = df1.rename(columns={'operating_date_x': 'operating_date', 'system_linenr': "system_linenr_toAssign", 'direction': 'direction_toAssign',
+                              'trip_number': 'toAssign', 'Naam_halte': 'start_stop_toAssign', 'departure_time_x': "departure_toAssign", 'vehicle_number_x': "vehicle_toAssign"})
+    df1 = df1[['toAssign', 'operating_date', 'system_linenr_toAssign',
+               'direction_toAssign', 'start_stop_toAssign', 'departure_toAssign', 'most_crowded_stop',
+               'vehicle_toAssign']]
+    # list of reassigned trips
+    df2 = pd.DataFrame(active_arcs, columns=['reAssign', 'toAssign'])
+    df2 = pd.merge(df2, trips, how='left', left_on=[
+                   'reAssign'], right_on=['trip_number'])
+    df2 = df2.rename(columns={'operating_date_x': 'operating_date', 'system_linenr': 'system_linenr_reAssign',
+                              'direction': 'direction_reAssign', 'Naam_halte': 'start_stop_reAssign', 'departure_time_x': 'departure_reAssign', 'vehicle_number_x': 'vehicle_reAssign'})
+    df2 = df2[['toAssign', 'reAssign', 'operating_date', 'system_linenr_reAssign',
+               'direction_reAssign',
+               'start_stop_reAssign', 'departure_reAssign', 'vehicle_reAssign']]
+    # list of imposed cancelled trips
+    df3 = pd.DataFrame(imposed_arc, columns=[
+                       'reAssign', 'toAssign', 'Imposed'])
+    df3 = pd.merge(df3, trips, how='left', left_on=[
+                   'Imposed'], right_on=['trip_number'])
+    df3 = df3.rename(columns={'operating_date_x': 'operating_date', 'system_linenr': 'system_linenr_imposed',
+                              'direction': 'direction_imposed', 'Naam_halte': 'start_stop_imposed', 'departure_time_x': 'departure_imposed', 'vehicle_number_x': 'vehicle_imposed'})
+    df3 = df3[['toAssign', 'reAssign', 'Imposed', 'operating_date',
+               'system_linenr_imposed', 'direction_imposed', 'start_stop_imposed', 'departure_imposed',
+               'vehicle_imposed']]
 
-# detailes of cancelled and re-assigned trips
-def model_output(active_arcs, imposed_arc, data):
-    if len(active_arcs) > 0:
-        pass
-    else:
-        sys.exit()
-    epsilon = 120000
-    cursor, conn = dp.connect_to_database()
-    bus_stops = pd.read_sql_query('select * from bus_stops', conn)
-    bus_stops = {i: j for i, j in zip(
-        bus_stops['stop'], bus_stops['Naam_halte'])}
+    final_data = pd.merge(df1, df2, how='left', on=[
+                          'toAssign', 'operating_date'])
+    final_data = pd.merge(final_data, df3, how='left', on=[
+                          'toAssign', 'reAssign', 'operating_date'])
+
+    final_data = final_data.replace({np.nan: None})
+    final_data['assign_from_depot'] = ''
+    for i in range(len(final_data)):
+        if final_data.loc[i, 'reAssign'] is None:
+            final_data.loc[i,
+                           'assign_from_depot'] = 'Potential assignment from depot'
+    final_data['deadhead'] = ''
+    for i in range(len(final_data)):
+        if final_data.loc[i, 'reAssign'] is not None:
+            deadhead = (deadhead_dict[(
+                first_stop_dict[final_data.loc[i, 'reAssign']], first_stop_dict[final_data.loc[i, 'toAssign']])])/60
+            final_data.loc[i, 'deadhead'] = round(deadhead)
+    final_data['departure_toAssign'] = final_data['departure_toAssign'].astype(
+        'str')
+    final_data['operating_date'] = final_data['operating_date'].astype('str')
+    final_data['date_time'] = final_data['operating_date'] + \
+        ' ' + final_data['departure_toAssign']
+    final_data['date_time'] = pd.to_datetime(
+        final_data['date_time'], infer_datetime_format=True)
+
+    column = ['operating_date', 'date_time', 'toAssign', 'system_linenr_toAssign',
+              'direction_toAssign', 'start_stop_toAssign', 'departure_toAssign',
+              'most_crowded_stop', 'vehicle_toAssign', 'assign_from_depot', 'reAssign',
+              'system_linenr_reAssign', 'direction_reAssign', 'start_stop_reAssign',
+              'departure_reAssign', 'vehicle_reAssign', 'deadhead', 'Imposed'
+              ]
+    final_data = final_data[column]
+    final_data = final_data.values.tolist()
+
+    cursor, conn = connect_to_databaseapi()
+    sql_insert = '''
+        declare @operating_date date = ?
+        declare @date_time datetime = ?
+        declare @toAssign bigint = ?
+        declare @system_linenr_toAssign bigint = ?
+        declare @direction_toAssign bigint = ?
+        declare @start_stop_toAssign nvarchar(50) = ?
+        declare @departure_toAssign time = ?
+        declare @most_overcrowded  float = ?
+        declare @vehicle_toAssign bigint = ?
+        declare @reassigned_from_depot nvarchar(50) = ?
+        declare @reAssign bigint = ?
+        declare @system_linenr_reAssign bigint = ?
+        declare @direction_reAssign bigint = ?
+        declare @start_stop_reAssign nvarchar(50) = ?
+        declare @departure_reAssign time = ?
+        declare @vehicle_reAssign bigint = ?
+        declare @deadhead bigint = ?
+        declare @imposed_cancellation bigint = ?
+
+        UPDATE api_reassignedtrips
+        SET date_time=@date_time, system_linenr_toAssign=@system_linenr_toAssign, direction_toAssign=@direction_toAssign, start_stop_toAssign=@start_stop_toAssign, departure_toAssign=@departure_toAssign,
+            most_overcrowded=@most_overcrowded, vehicle_toAssign=@vehicle_toAssign,reassigned_from_depot=@reassigned_from_depot, reAssign=@reAssign,  system_linenr_reAssign=@system_linenr_reAssign, direction_reAssign=@direction_reAssign, start_stop_reAssign=@start_stop_reAssign,
+            departure_reAssign=@departure_reAssign, vehicle_reAssign=@vehicle_reAssign, deadhead=@deadhead, imposed_cancellation=@imposed_cancellation
+        WHERE operating_date = @operating_date AND toAssign = @toAssign
+
+        IF @@ROWCOUNT = 0
+            INSERT INTO api_reassignedtrips
+            (operating_date, date_time, toAssign, system_linenr_toAssign,direction_toAssign, start_stop_toAssign, departure_toAssign,
+            most_overcrowded, vehicle_toAssign,reassigned_from_depot, reAssign, system_linenr_reAssign, direction_reAssign, start_stop_reAssign,
+            departure_reAssign, vehicle_reAssign, deadhead, imposed_cancellation)
+            VALUES (@operating_date, @date_time, @toAssign, @system_linenr_toAssign, @direction_toAssign, @start_stop_toAssign, @departure_toAssign,
+            @most_overcrowded, @vehicle_toAssign,  @reassigned_from_depot, @reAssign, @system_linenr_reAssign, @direction_reAssign, @start_stop_reAssign,
+            @departure_reAssign, @vehicle_reAssign, @deadhead, @imposed_cancellation)
+        '''
+    cursor.executemany(sql_insert, final_data)
+
+    conn.commit()
     cursor.close()
 
-    deadhead_dict = deadhead()
-    demand_dict, stranded_passenger_dict, stops_dict, toAssign, reAssign, trip_following_trips, preceeding_trip = sets_parameters(
-        data)
 
-    first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict = dp.data_preprocessing(
-        data)
-    # data['DepartureTime'] = data['DepartureTime'].apply(
-    #     conv_millsecond_localtime)
+# """
+# plot occupancy data
+# """
 
-    line_number = data.sort_values(by=['Systeemlijnnr']).drop_duplicates(
-        subset=['TripNumber'], keep='first')
-    line_number = {i: j for i, j in zip(
-        line_number.TripNumber, line_number.Systeemlijnnr)}
-
-    for i, j in active_arcs:
-        cancel_linenr = line_number[i]
-        cancel_departure = conv_millsecond_localtime(dep_time_dict[40869])
-        cancel_first_stop = bus_stops[first_stop_dict[i]]
-        reassign_linenr = line_number[j]
-        toassign_departure = conv_millsecond_localtime(dep_time_dict[j])
-        deadhead_time = (
-            deadhead_dict[(first_stop_dict[i], first_stop_dict[j])])/60000
-        reassigned_departure = conv_millsecond_localtime(
-            dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] + epsilon)
-        reassigned_first_stop = bus_stops[first_stop_dict[j]]
-
-        for p, q, r in imposed_arc:
-            if len(imposed_arc) > 0 and p == i and q == j:
-                next_planned_trip = trip_following_trips[r][0]
-                return_time = conv_millsecond_localtime(dep_time_dict[p] + deadhead_dict[(first_stop_dict[p], first_stop_dict[q])] +
-                                                        epsilon + travel_time_dict[q] + deadhead_dict[(last_stop_dict[q], first_stop_dict[next_planned_trip])])
-                ext_planned_linenr = line_number[next_planned_trip]
-                next_planned_trip_departure = conv_millsecond_localtime(
-                    dep_time_dict[next_planned_trip])
-                next_trip_first_stop = bus_stops[first_stop_dict[r]]
-            else:
-                sys.exit()
-        next_planned_trip = trip_following_trips[i][0]
-        return_time = conv_millsecond_localtime(dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] +
-                                                epsilon + travel_time_dict[j] + deadhead_dict[(last_stop_dict[j], first_stop_dict[next_planned_trip])])
-        next_planned_trip_departure = conv_millsecond_localtime(
-            dep_time_dict[next_planned_trip])
-        next_planned_linenr = line_number[next_planned_trip]
-        next_trip_first_stop = bus_stops[first_stop_dict[next_planned_trip]]
-
-        print(colored('Optimal solution:', 'green', attrs=['bold']))
-        print("Cancelled trip {}".format(i) + ' ' +
-              'from line {}'.format(cancel_linenr))
-        print("Assign before/after trip {}".format(j) +
-              ' ' + 'on line {}'.format(reassign_linenr))
-        print(colored('Cancellation details:', 'green', attrs=['bold']))
-        print("Planned departure from: {}".format(
-            cancel_first_stop) + ': {}'.format(cancel_departure))
-        print("Deadhead time from: {}".format(cancel_first_stop) +
-              " to: {}".format(reassigned_first_stop) + ": {}".format(deadhead_time) + ' minutes')
-        print('Boarding time: 2 minutes')
-        print("Re-assigned departure from {}".format(reassigned_first_stop) +
-              ': {}'.format(reassigned_departure))
-        print("Return to the next planned trip {}".format(
-            next_planned_trip) + " " + "on line {}".format(next_planned_linenr) + ': {}'.format(return_time))
-        print("Planned departure of {}".format(next_planned_trip) + ' ' +
-              'from {}'.format(next_trip_first_stop) + ': {}'.format(next_planned_trip_departure))
-
-        cursor, conn = dp.connect_to_database()
-        model_output = pd.read_sql_query('select * from model_output', conn)
-        if i not in list(model_output['cancelledTrip']):
-            cursor.execute("INSERT INTO model_output (cancelledTrip, lineNumber, plannedDeparture, plannedStop, reassignTo, reassignDeparture, reassignStop, deadheadTime, boardingtime, reassignedDeparture, returnTime, nextTrip, nextLineNumber, nextDeparture, nextStop) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                           i, cancel_linenr, cancel_departure, cancel_first_stop, j, toassign_departure, reassigned_first_stop, deadhead_time, epsilon/60000, reassigned_departure, return_time, next_planned_trip, next_planned_linenr, next_planned_trip_departure, next_trip_first_stop)
-
-            conn.commit()
-        # cursor.execute("SELECT * FROM model_output GROUP BY cancelledTrip HAVING COUNT(cancelledTrip) > 1")
-        cursor.close()
+# # # print optimal solutions
 
 
-model_output(active_arcs, imposed_arc, data)
+# def conv_millsecond_localtime(milliseconds):
+#     uct_time = dt.datetime.fromtimestamp(milliseconds/1000.0)
+#     uct_time = pytz.utc.localize(uct_time)
+#     cet = pytz.timezone('CET')
+#     offset = uct_time.astimezone(cet).utcoffset()
+#     local_time = uct_time - offset
+#     return local_time
+
+
+# def plot_occupancy(cancelled_trip, reassigned_trip):
+#     # data['DepartureTime'] = data['DepartureTime'].apply(
+#     #     conv_millsecond_localtime)
+#     line_number = data.sort_values(by=['Systeemlijnnr']).drop_duplicates(
+#         subset=['TripNumber'], keep='first')
+#     line_number = {i: j for i, j in zip(
+#         line_number.TripNumber, line_number.Systeemlijnnr)}
+#     cancelled = data[data['TripNumber'] == cancelled_trip]
+#     reassigned = data[data['TripNumber'] == reassigned_trip]
+#     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+#     ax1.plot(cancelled.ActualDepartureTime,
+#              cancelled.occupancy, color='green')
+#     ax1.legend(['Cancelled Trip'], loc=1)
+#     ax1.set(xlabel='Departure Time', ylabel='Occupancy')
+#     ax1.title.set_text('Line number: {} \n Trip number: {}'.format(
+#         line_number[cancelled_trip], cancelled_trip))
+#     ax1.tick_params(axis="x", rotation=45)
+
+#     ax2.plot(reassigned.ActualDepartureTime,
+#              reassigned.occupancy, color='blue')
+#     ax2.legend(['Overcrowded Trip'], loc=1)
+#     ax2.set(xlabel='Departure Time', ylabel='Occupancy')
+#     ax2.title.set_text('Line number: {} \n Trip number: {}'.format(
+#         line_number[reassigned_trip], reassigned_trip))
+#     ax2.tick_params(axis="x", rotation=45)
+#     fig.tight_layout()
+#     plt.savefig('Occupancy for trip {} assigned to {}.png'.format(
+#         cancelled_trip, reassigned_trip), bbox_inches='tight', dpi=300)
+#     plt.show()
+
+
+# for i, j in active_arcs:
+#     plot_occupancy(i, j)
+
+
+# # detailes of cancelled and re-assigned trips
+# def model_output(active_arcs, imposed_arc, data):
+#     if len(active_arcs) > 0:
+#         pass
+#     else:
+#         sys.exit()
+#     epsilon = 120000
+#     cursor, conn = dp.connect_to_database()
+#     bus_stops = pd.read_sql_query('select * from bus_stops', conn)
+#     bus_stops = {i: j for i, j in zip(
+#         bus_stops['stop'], bus_stops['Naam_halte'])}
+#     cursor.close()
+
+#     deadhead_dict = deadhead()
+#     demand_dict, stranded_passenger_dict, stops_dict, toAssign, reAssign, trip_following_trips, preceeding_trip = sets_parameters(
+#         data)
+
+#     first_stop_dict, last_stop_dict, dep_time_dict, arr_time_dict, travel_time_dict = dp.data_preprocessing(
+#         data)
+#     # data['DepartureTime'] = data['DepartureTime'].apply(
+#     #     conv_millsecond_localtime)
+
+#     line_number = data.sort_values(by=['Systeemlijnnr']).drop_duplicates(
+#         subset=['TripNumber'], keep='first')
+#     line_number = {i: j for i, j in zip(
+#         line_number.TripNumber, line_number.Systeemlijnnr)}
+
+#     for i, j in active_arcs:
+#         cancel_linenr = line_number[i]
+#         cancel_departure = conv_millsecond_localtime(dep_time_dict[40869])
+#         cancel_first_stop = bus_stops[first_stop_dict[i]]
+#         reassign_linenr = line_number[j]
+#         toassign_departure = conv_millsecond_localtime(dep_time_dict[j])
+#         deadhead_time = (
+#             deadhead_dict[(first_stop_dict[i], first_stop_dict[j])])/60000
+#         reassigned_departure = conv_millsecond_localtime(
+#             dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] + epsilon)
+#         reassigned_first_stop = bus_stops[first_stop_dict[j]]
+
+#         for p, q, r in imposed_arc:
+#             if len(imposed_arc) > 0 and p == i and q == j:
+#                 next_planned_trip = trip_following_trips[r][0]
+#                 return_time = conv_millsecond_localtime(dep_time_dict[p] + deadhead_dict[(first_stop_dict[p], first_stop_dict[q])] +
+#                                                         epsilon + travel_time_dict[q] + deadhead_dict[(last_stop_dict[q], first_stop_dict[next_planned_trip])])
+#                 ext_planned_linenr = line_number[next_planned_trip]
+#                 next_planned_trip_departure = conv_millsecond_localtime(
+#                     dep_time_dict[next_planned_trip])
+#                 next_trip_first_stop = bus_stops[first_stop_dict[r]]
+#             else:
+#                 sys.exit()
+#         next_planned_trip = trip_following_trips[i][0]
+#         return_time = conv_millsecond_localtime(dep_time_dict[i] + deadhead_dict[(first_stop_dict[i], first_stop_dict[j])] +
+#                                                 epsilon + travel_time_dict[j] + deadhead_dict[(last_stop_dict[j], first_stop_dict[next_planned_trip])])
+#         next_planned_trip_departure = conv_millsecond_localtime(
+#             dep_time_dict[next_planned_trip])
+#         next_planned_linenr = line_number[next_planned_trip]
+#         next_trip_first_stop = bus_stops[first_stop_dict[next_planned_trip]]
+
+#         print(colored('Optimal solution:', 'green', attrs=['bold']))
+#         print("Cancelled trip {}".format(i) + ' ' +
+#               'from line {}'.format(cancel_linenr))
+#         print("Assign before/after trip {}".format(j) +
+#               ' ' + 'on line {}'.format(reassign_linenr))
+#         print(colored('Cancellation details:', 'green', attrs=['bold']))
+#         print("Planned departure from: {}".format(
+#             cancel_first_stop) + ': {}'.format(cancel_departure))
+#         print("Deadhead time from: {}".format(cancel_first_stop) +
+#               " to: {}".format(reassigned_first_stop) + ": {}".format(deadhead_time) + ' minutes')
+#         print('Boarding time: 2 minutes')
+#         print("Re-assigned departure from {}".format(reassigned_first_stop) +
+#               ': {}'.format(reassigned_departure))
+#         print("Return to the next planned trip {}".format(
+#             next_planned_trip) + " " + "on line {}".format(next_planned_linenr) + ': {}'.format(return_time))
+#         print("Planned departure of {}".format(next_planned_trip) + ' ' +
+#               'from {}'.format(next_trip_first_stop) + ': {}'.format(next_planned_trip_departure))
+
+#         cursor, conn = dp.connect_to_database()
+#         model_output = pd.read_sql_query('select * from model_output', conn)
+#         if i not in list(model_output['cancelledTrip']):
+#             cursor.execute("INSERT INTO model_output (cancelledTrip, lineNumber, plannedDeparture, plannedStop, reassignTo, reassignDeparture, reassignStop, deadheadTime, boardingtime, reassignedDeparture, returnTime, nextTrip, nextLineNumber, nextDeparture, nextStop) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+#                            i, cancel_linenr, cancel_departure, cancel_first_stop, j, toassign_departure, reassigned_first_stop, deadhead_time, epsilon/60000, reassigned_departure, return_time, next_planned_trip, next_planned_linenr, next_planned_trip_departure, next_trip_first_stop)
+
+#             conn.commit()
+#         # cursor.execute("SELECT * FROM model_output GROUP BY cancelledTrip HAVING COUNT(cancelledTrip) > 1")
+#         cursor.close()
+
+
+# model_output(active_arcs, imposed_arc, data)
 
 
 # # list of cancelled trips

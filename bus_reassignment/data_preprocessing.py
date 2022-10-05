@@ -1,7 +1,7 @@
 from math import comb
 import statistics
 import datetime as dt
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from traceback import format_exception
 from unittest.util import sorted_list_difference
@@ -25,14 +25,13 @@ gmaps = googlemaps.Client(key='AIzaSyAUksLuaZra4mCcOLZL_52b9nIvHa7TgFw')
 
 def connect_to_database():
     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
-                          'Server=ZAKIR;'
+                          'Server=UT163156;'
                           'Database=keolis;'
                           'Trusted_Connection=yes;')
     cursor = conn.cursor()
     return cursor, conn
 
 
-date = '2022-09-09'
 
 
 def import_data(date):
@@ -160,8 +159,9 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 def calculate_deadhead(date):
     cursor, conn = connect_to_database()
+    date= str(date)
     data = pd.read_sql(
-        "SELECT * FROM pred_occupancy_per_stop WHERE operating_date = '{}'".format(date), conn)
+        "SELECT * FROM timetable WHERE operating_date = '{}'".format(date), conn)
     data = data.replace({np.nan: None})
 
     for i in range(len(data)):
@@ -177,7 +177,7 @@ def calculate_deadhead(date):
         subset=['trip_number'], keep='last')
 
     stops = pd.read_csv(
-        r'C:/Users/zfara/OneDrive - University of Twente/Documenten/PDEng Project/Data/bus_stops.csv', sep=';')
+        r'C:/Users/FARAHMANDZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/bus_stops.csv', sep=';')
     cursor.close()
 
     first_stop = pd.merge(first_stop, stops, left_on=[
@@ -244,5 +244,5 @@ def calculate_deadhead(date):
 
     conn.commit()
 
-
-calculate_deadhead('2022-09-15')
+date = dt.datetime.today().date() + timedelta(days=1)
+calculate_deadhead(date)
