@@ -17,10 +17,10 @@ def connect_to_database():
 
 def export_occupancy_per_trip(date, line, direction, stop):
     timetable = pd.read_csv(
-        r'C:/Users/zfara/OneDrive - University of Twente/Documenten/PDEng Project/Data/timetable.csv', sep=';')
+        r'path/', sep=';')
 
     data = pd.read_csv(
-        r'C:/Users/zfara/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
+        r'path/'.format(data_name), sep=';')
     data = data.fillna(0)
     data['TripNumber'] = data['TripNumber'].astype('int64')
     data['Systeemlijnnr'] = data['Systeemlijnnr'].astype('int64')
