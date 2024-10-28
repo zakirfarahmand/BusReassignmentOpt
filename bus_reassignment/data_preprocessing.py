@@ -19,8 +19,8 @@ from matplotlib import style
 plt.style.use('seaborn-dark')
 
 # Requires API key
-gmaps = googlemaps.Client(key='AIzaSyAUksLuaZra4mCcOLZL_52b9nIvHa7TgFw')
-# gmaps = googlemaps.Client(key='AIzaSyAra0o3L3rs-uHn4EpaXx1Y57SIF_02684')
+gmaps = googlemaps.Client(key='')
+# gmaps = googlemaps.Client(key='')
 
 
 def connect_to_database():
