@@ -24,7 +24,7 @@ import googlemaps
 import sys
 import pytz
 
-# AIzaSyBmoRMRmfpYO5AG3GsSbmKlyNPaWOkKROE
+# 
 # import functions
 # insert year, month, and day
 
