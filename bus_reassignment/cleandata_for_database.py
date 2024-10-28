@@ -7,16 +7,16 @@ import pyodbc
 
 def connect_to_database():
     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
-                          'Server=ZAKIR;'
-                          'Database=keolis;'
+                          'Server=[name];'
+                          'Database=[name];'
                           'Trusted_Connection=yes;')
     cursor = conn.cursor()
     return cursor, conn
 
 def connect_to_databaseapi():
     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
-                          'Server=ZAKIR;'
-                          'Database=keodss3.0;'
+                          'Server=[name];'
+                          'Database=[name];'
                           'Trusted_Connection=yes;')
     cursor = conn.cursor()
     return cursor, conn
@@ -24,7 +24,7 @@ def connect_to_databaseapi():
 
 def export_occupancy_per_trip(data_name):
     data = pd.read_csv(
-        r'C:/Users/zfara/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
+        r'path/{}.csv'.format(data_name), sep=';')
     data = data.fillna(0)
 
     cursor, conn = connect_to_database()
@@ -65,7 +65,7 @@ export_occupancy_per_trip(data_name='September1_7')
 
 def export_cancellation(data_name):
     data = pd.read_csv(
-        r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=',')
+        r'path/{}.csv'.format(data_name), sep=',')
 
     data['Date'] = pd.to_datetime(
         data['IdDimDatum'].astype(str), format='%Y%m%d')
@@ -141,7 +141,7 @@ export_cancellation(data_name='bus_cancellation')
 
 def export_boarding(data_name):
     data = pd.read_csv(
-        r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
+        r'path/{}.csv'.format(data_name), sep=';')
     data = data.fillna(0)
     data['hour'] = pd.to_datetime(data['ActualDepartureTime']).dt.hour
 
@@ -195,9 +195,9 @@ export_boarding(data_name='boarding_alighting_2021')
 
 def export_occupancy_per_stop(data_name):
     # data = pd.read_csv(
-    #     r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
+    #     r'path/{}.csv'.format(data_name), sep=';')
     data = pd.read_csv(
-        r'C:/Users/zfara/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=';')
+        r'path/{}.csv'.format(data_name), sep=';')
     data = data.fillna(0)
     data['hour'] = pd.to_datetime(data['ActualDepartureTime']).dt.hour
 
@@ -250,7 +250,7 @@ export_occupancy_per_stop(data_name='boarding_alighting_2022')
 
 def export_weather(data_name):
     data = pd.read_csv(
-        r'C:/Users/FarahmandZH/OneDrive - University of Twente/Documenten/PDEng Project/Data/{}.csv'.format(data_name), sep=',')
+        r'path/{}.csv'.format(data_name), sep=',')
     column = ['YYYYMMDD', '   HH', '   DD', '   FF', '    T',
               '   SQ', '   DR', '   RH', '    N', '    U', '    R', '    S']
     data = data[column]
@@ -326,7 +326,7 @@ export_weather(data_name='weather_2011_2020')
 
 def calculate_deadhead(data):
     data = pd.read_csv(
-        r'C:/Users/zfara/OneDrive - University of Twente/Documenten/PDEng Project/Data/deadhead_time.csv', sep=',')
+        r'path', sep=',')
     cursor, conn = connect_to_database()
     data = data.values.tolist()
     sql_insert = '''
@@ -349,50 +349,11 @@ def calculate_deadhead(data):
     cursor.close()
 
 
-# def export_timetable():
-#     cursor, conn = connect_to_database()
-
-#     data = pd.read_sql("SELECT * FROM timetable_data", conn)
-#     data.dropna(inplace=True)
-#     cursor.close()
-#     data.sort_values(
-#         by=['IdDimDatum', 'Systeemlijnnr', 'dep_time'], inplace=True)
-#     column = ['IdDimDatum', 'Systeemlijnnr', 'Richting', 'RitNummer', 'Volgnummer',
-#               'IdDimHalte', 'passing_time', 'arr_time', 'dep_time']
-#     data = data[column]
-
-#     data = data.values.tolist()
-#     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
-#                           'Server=ZAKIR;'
-#                           'Database=keodss;'
-#                           'Trusted_Connection=yes;')
-#     cursor = conn.cursor()
-#     sql_insert = '''
-#         declare @operating_date date = ?
-#         declare @system_linenr bigint = ?
-#         declare @direction bigint = ?
-#         declare @trip_number bigint = ?
-#         declare @vehicle_number bigint = ?
-#         declare @stop bigint = ?
-#         declare @passing_time datetime = ?
-#         declare @arrival_time datetime = ?
-#         declare @departure_time datetime = ?
-
-
-#         INSERT INTO api_timetable
-#                 (operating_date, system_linenr, direction, trip_number, vehicle_number, stop, passing_time, arrival_time, departure_time)
-#             VALUES (@operating_date, @system_linenr, @direction, @trip_number, @vehicle_number, @stop, @passing_time, @arrival_time, @departure_time)
-#         '''
-#     cursor.executemany(sql_insert, data)
-
-#     conn.commit()
-#     cursor.close()
-
 def export_timetable_to_api():
     cursor, conn = connect_to_database()
 
     data = pd.read_csv(
-        r'C:/Users/zfara/OneDrive - University of Twente/Documenten/PDEng Project/Data/timetable.csv', sep=';')
+        r'path', sep=';')
     stops = pd.read_sql("SELECT * FROM bus_stops", conn)
 
     data = pd.merge(data, stops, on=['IdDimHalte', 'IdDimHalte'])
@@ -535,21 +496,3 @@ def export_stops():
     conn.commit()
     cursor.close()
 
-
-
-# test = data[data['Systeemlijnnr'] == 4709]
-
-
-# test1 = test[test['Direction'] == 1]
-# test2 = test[test['Direction'] == 2]
-
-# fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7))
-# ax1.plot(test1.DateTime, test1.BoardersCorrected, color='green')
-# ax1.legend(['direction 1'], loc=2)
-# ax2.plot(test2.DateTime,
-#          test2.BoardersCorrected, color='blue')
-# # ax2.legend(['Planned departure'], loc=2)
-# # ax2.set(xlabel='Departure Time', ylabel='Occupancy')
-# # ax2.title.set_text('2022-02-11 \n trip number: {}'.format(trip_number))
-# fig.tight_layout()
-# plt.show()
