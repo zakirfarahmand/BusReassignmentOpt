@@ -24,10 +24,6 @@ import googlemaps
 import sys
 import pytz
 
-# 
-# import functions
-# insert year, month, and day
-
 
 def connect_to_database():
     conn = pyodbc.connect('Driver={SQL Server Native Client 11.0};'
